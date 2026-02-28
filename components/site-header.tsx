@@ -12,7 +12,6 @@ const links = [
   { href: "/cake-builder", label: "Custom Cake" },
   { href: "/classes", label: "Classes" },
   { href: "/contact", label: "Contact" },
-  { href: "/admin", label: "Admin" },
 ];
 
 export function SiteHeader() {
@@ -50,4 +49,3 @@ export function SiteHeader() {
     </header>
   );
 }
-

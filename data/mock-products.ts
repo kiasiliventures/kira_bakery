@@ -46,7 +46,7 @@ export const mockProducts: Product[] = [
     category: "Cakes",
     priceUGX: 110000,
     image:
-      "https://images.unsplash.com/photo-1559622214-58f2ddc7ea1a?auto=format&fit=crop&w=1200&q=80",
+      "https://images.unsplash.com/photo-1571115177098-24ec42ed204d?auto=format&fit=crop&w=1200&q=80",
     soldOut: false,
     options: {
       sizes: ["1kg", "2kg", "4kg"],
@@ -118,4 +118,3 @@ export const mockProducts: Product[] = [
     options: { sizes: ["Medium", "Large", "Party"] },
   },
 ];
-

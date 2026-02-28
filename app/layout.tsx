@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter, Playfair_Display } from "next/font/google";
+import { Analytics } from "@vercel/analytics/react";
 import { AppProvider } from "@/components/providers/app-provider";
 import { PwaRegister } from "@/components/pwa-register";
 import { SiteFooter } from "@/components/site-footer";
@@ -35,6 +36,7 @@ export default function RootLayout({
           <SiteHeader />
           <main className="mx-auto w-full max-w-6xl px-4 py-8">{children}</main>
           <SiteFooter />
+          <Analytics />
         </AppProvider>
       </body>
     </html>

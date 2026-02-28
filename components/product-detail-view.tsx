@@ -11,9 +11,13 @@ import { formatUGX } from "@/lib/format";
 import { getProductRepository } from "@/lib/repository-provider";
 import type { Product } from "@/types/product";
 
+const FALLBACK_PRODUCT_IMAGE =
+  "https://images.unsplash.com/photo-1578985545062-69928b1d9587?auto=format&fit=crop&w=1200&q=80";
+
 export function ProductDetailView({ id }: { id: string }) {
   const { addItem } = useCart();
   const [product, setProduct] = useState<Product | null>(null);
+  const [imageSrc, setImageSrc] = useState("");
   const [quantity, setQuantity] = useState(1);
   const [size, setSize] = useState("");
   const [flavor, setFlavor] = useState("");
@@ -23,6 +27,7 @@ export function ProductDetailView({ id }: { id: string }) {
       const repository = getProductRepository();
       const value = await repository.getById(id);
       setProduct(value);
+      setImageSrc(value?.image ?? "");
       if (value?.options?.sizes?.[0]) {
         setSize(value.options.sizes[0]);
       }
@@ -40,7 +45,14 @@ export function ProductDetailView({ id }: { id: string }) {
   return (
     <section className="grid gap-8 lg:grid-cols-2">
       <div className="relative h-[360px] overflow-hidden rounded-2xl md:h-[480px]">
-        <Image src={product.image} alt={product.name} fill className="object-cover" priority />
+        <Image
+          src={imageSrc || FALLBACK_PRODUCT_IMAGE}
+          alt={product.name}
+          fill
+          className="object-cover"
+          priority
+          onError={() => setImageSrc(FALLBACK_PRODUCT_IMAGE)}
+        />
       </div>
       <Card>
         <CardContent className="space-y-5 p-6">
@@ -92,7 +104,7 @@ export function ProductDetailView({ id }: { id: string }) {
               addItem({
                 productId: product.id,
                 name: product.name,
-                image: product.image,
+                image: imageSrc || FALLBACK_PRODUCT_IMAGE,
                 priceUGX: product.priceUGX,
                 selectedSize: size || undefined,
                 selectedFlavor: flavor || undefined,
@@ -110,4 +122,3 @@ export function ProductDetailView({ id }: { id: string }) {
     </section>
   );
 }
-

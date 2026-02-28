@@ -8,7 +8,17 @@ export class LocalProductRepository implements ProductRepository {
   async getAll(): Promise<Product[]> {
     const products = readLocalStorage<Product[]>(STORAGE_KEYS.products, []);
     if (products.length > 0) {
-      return products;
+      const migrated = products.map((product) =>
+        product.id === "cake-black-forest"
+          ? {
+              ...product,
+              image:
+                "https://images.unsplash.com/photo-1464349095431-e9a21285b5f3?auto=format&fit=crop&w=1200&q=80",
+            }
+          : product,
+      );
+      writeLocalStorage(STORAGE_KEYS.products, migrated);
+      return migrated;
     }
 
     writeLocalStorage(STORAGE_KEYS.products, mockProducts);
@@ -33,4 +43,3 @@ export class LocalProductRepository implements ProductRepository {
     writeLocalStorage(STORAGE_KEYS.products, updated);
   }
 }
-

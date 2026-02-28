@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
+import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,19 +14,24 @@ type ProductCardProps = {
   product: Product;
 };
 
+const FALLBACK_PRODUCT_IMAGE =
+  "https://images.unsplash.com/photo-1578985545062-69928b1d9587?auto=format&fit=crop&w=1200&q=80";
+
 export function ProductCard({ product }: ProductCardProps) {
   const { addItem } = useCart();
+  const [imageSrc, setImageSrc] = useState(product.image);
 
   return (
     <Card className="overflow-hidden">
       <Link href={`/menu/${product.id}`} className="block">
         <div className="relative h-52 w-full">
           <Image
-            src={product.image}
+            src={imageSrc}
             alt={product.name}
             fill
             className="rounded-t-2xl object-cover"
             sizes="(max-width: 768px) 100vw, 33vw"
+            onError={() => setImageSrc(FALLBACK_PRODUCT_IMAGE)}
           />
         </div>
       </Link>
@@ -49,7 +55,7 @@ export function ProductCard({ product }: ProductCardProps) {
             addItem({
               productId: product.id,
               name: product.name,
-              image: product.image,
+              image: imageSrc,
               priceUGX: product.priceUGX,
             })
           }
@@ -60,4 +66,3 @@ export function ProductCard({ product }: ProductCardProps) {
     </Card>
   );
 }
-

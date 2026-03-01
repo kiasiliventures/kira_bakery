@@ -1,7 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
 import { CategoryTile } from "@/components/category-tile";
-import { Button } from "@/components/ui/button";
 
 export default function HomePage() {
   return (
@@ -18,13 +17,23 @@ export default function HomePage() {
             Artisan breads, pastries, cakes, and pizza made fresh in Kira every day.
           </p>
           <div className="flex flex-wrap gap-3">
-            <Link href="/menu">
-              <Button size="lg">Order Now</Button>
+            <Link
+              href="/menu"
+              className="inline-flex h-12 items-center justify-center rounded-2xl px-8 text-base font-semibold text-white shadow-[0_10px_22px_rgba(148,2,2,0.25)] transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#940202]/35 focus-visible:ring-offset-2"
+              style={{ backgroundColor: "#940202", color: "#FFFFFF" }}
+            >
+              Order Now
             </Link>
-            <Link href="/menu">
-              <Button size="lg" variant="outline">
-                View Menu
-              </Button>
+            <Link
+              href="/menu"
+              className="inline-flex h-12 items-center justify-center rounded-2xl border-2 px-8 text-base font-semibold shadow-[0_6px_16px_rgba(58,42,30,0.08)] transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#940202]/35 focus-visible:ring-offset-2"
+              style={{
+                borderColor: "#940202",
+                backgroundColor: "#FFF8F0",
+                color: "#940202",
+              }}
+            >
+              View Menu
             </Link>
           </div>
         </div>

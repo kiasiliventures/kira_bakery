@@ -4,19 +4,34 @@ import { readLocalStorage, writeLocalStorage } from "@/lib/storage";
 import type { ProductRepository } from "@/repositories/product-repository";
 import type { Product } from "@/types/product";
 
+type LegacyProduct = Omit<Product, "category"> & {
+  category: Product["category"] | "Savory" | "Pizza";
+};
+
 export class LocalProductRepository implements ProductRepository {
   async getAll(): Promise<Product[]> {
-    const products = readLocalStorage<Product[]>(STORAGE_KEYS.products, []);
+    const products = readLocalStorage<LegacyProduct[]>(STORAGE_KEYS.products, []);
     if (products.length > 0) {
-      const migrated = products.map((product) =>
-        product.id === "cake-black-forest"
-          ? {
-              ...product,
-              image:
-                "https://images.unsplash.com/photo-1464349095431-e9a21285b5f3?auto=format&fit=crop&w=1200&q=80",
-            }
-          : product,
-      );
+      const migrated: Product[] = products.map((product) => {
+        const migratedCategory =
+          product.category === "Savory" || product.category === "Pizza"
+            ? "Others"
+            : product.category;
+
+        if (product.id === "cake-black-forest") {
+          return {
+            ...product,
+            category: migratedCategory,
+            image:
+              "https://images.unsplash.com/photo-1464349095431-e9a21285b5f3?auto=format&fit=crop&w=1200&q=80",
+          };
+        }
+
+        return {
+          ...product,
+          category: migratedCategory,
+        };
+      });
       writeLocalStorage(STORAGE_KEYS.products, migrated);
       return migrated;
     }

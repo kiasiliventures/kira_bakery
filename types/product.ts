@@ -2,8 +2,7 @@ export const PRODUCT_CATEGORIES = [
   "Bread",
   "Cakes",
   "Pastries",
-  "Savory",
-  "Pizza",
+  "Others",
 ] as const;
 
 export type ProductCategory = (typeof PRODUCT_CATEGORIES)[number];
@@ -24,4 +23,3 @@ export type Product = {
   featured?: boolean;
   options?: ProductOptionSet;
 };
-

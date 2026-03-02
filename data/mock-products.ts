@@ -79,7 +79,7 @@ export const mockProducts: Product[] = [
     id: "savory-quiche",
     name: "Spinach Quiche Slice",
     description: "Savory tart with spinach, cheese, and roasted onion.",
-    category: "Savory",
+    category: "Others",
     priceUGX: 16000,
     image:
       "https://images.unsplash.com/photo-1464306076886-da185f6a9d05?auto=format&fit=crop&w=1200&q=80",
@@ -89,7 +89,7 @@ export const mockProducts: Product[] = [
     id: "savory-sausage-roll",
     name: "Sausage Roll",
     description: "Hand-rolled puff pastry with seasoned beef sausage filling.",
-    category: "Savory",
+    category: "Others",
     priceUGX: 14000,
     image:
       "https://images.unsplash.com/photo-1532635221-8ec15f2ce05d?auto=format&fit=crop&w=1200&q=80",
@@ -99,7 +99,7 @@ export const mockProducts: Product[] = [
     id: "pizza-margherita",
     name: "Woodstone Margherita Pizza",
     description: "Tomato basil sauce, mozzarella, and extra virgin olive oil.",
-    category: "Pizza",
+    category: "Others",
     priceUGX: 42000,
     image:
       "https://images.unsplash.com/photo-1593560708920-61dd98c46a4e?auto=format&fit=crop&w=1200&q=80",
@@ -110,11 +110,31 @@ export const mockProducts: Product[] = [
     id: "pizza-pepperoni",
     name: "Pepperoni Pizza",
     description: "Slow-proof crust with mozzarella and premium beef pepperoni.",
-    category: "Pizza",
+    category: "Others",
     priceUGX: 48000,
     image:
       "https://images.unsplash.com/photo-1513104890138-7c749659a591?auto=format&fit=crop&w=1200&q=80",
     soldOut: false,
     options: { sizes: ["Medium", "Large", "Party"] },
+  },
+  {
+    id: "others-greek-yoghurt",
+    name: "Greek Yoghurt Cup",
+    description: "Creamy cultured yoghurt served chilled with honey drizzle.",
+    category: "Others",
+    priceUGX: 9000,
+    image:
+      "https://images.unsplash.com/photo-1488477181946-6428a0291777?auto=format&fit=crop&w=1200&q=80",
+    soldOut: false,
+  },
+  {
+    id: "others-granola-parfait",
+    name: "Granola Fruit Parfait",
+    description: "Layered yoghurt, toasted granola, and fresh seasonal fruit.",
+    category: "Others",
+    priceUGX: 14000,
+    image:
+      "https://images.unsplash.com/photo-1511690743698-d9d85f2fbf38?auto=format&fit=crop&w=1200&q=80",
+    soldOut: false,
   },
 ];

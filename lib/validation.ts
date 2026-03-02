@@ -1,17 +1,38 @@
 import { z } from "zod";
 import { PRODUCT_CATEGORIES } from "@/types/product";
 
-export const checkoutSchema = z.object({
-  customerName: z.string().min(2, "Name is required"),
-  phone: z
-    .string()
-    .min(9, "Phone is required")
-    .regex(/^\+?[0-9]{9,15}$/, "Use a valid phone number"),
-  email: z.string().email("Use a valid email").optional().or(z.literal("")),
-  address: z.string().min(5, "Address is required"),
-  deliveryDate: z.string().min(1, "Delivery date is required"),
-  notes: z.string().max(300, "Keep notes under 300 characters").optional(),
-});
+export const checkoutSchema = z
+  .object({
+    deliveryMethod: z.enum(["delivery", "pickup"]),
+    customerName: z.string().min(2, "Name is required"),
+    phone: z
+      .string()
+      .min(9, "Phone is required")
+      .regex(/^\+?[0-9]{9,15}$/, "Use a valid phone number"),
+    email: z.string().email("Use a valid email").optional().or(z.literal("")),
+    address: z.string().optional().or(z.literal("")),
+    deliveryDate: z.string().optional().or(z.literal("")),
+    notes: z.string().max(300, "Keep notes under 300 characters").optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.deliveryMethod === "delivery") {
+      if (!data.address || data.address.trim().length < 5) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["address"],
+          message: "Address is required for delivery",
+        });
+      }
+
+      if (!data.deliveryDate || data.deliveryDate.trim().length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["deliveryDate"],
+          message: "Delivery date is required for delivery",
+        });
+      }
+    }
+  });
 
 export const cakeBuilderSchema = z
   .object({

@@ -21,9 +21,15 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
   const { items, subtotalUGX, clearCart } = useCart();
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [deliveryMethod, setDeliveryMethod] = useState<"delivery" | "pickup">(
+    "delivery",
+  );
 
   const onSubmit = async (formData: FormData) => {
     const raw: CheckoutSchemaInput = {
+      deliveryMethod: String(formData.get("deliveryMethod") ?? "delivery") as
+        | "delivery"
+        | "pickup",
       customerName: String(formData.get("customerName") ?? ""),
       phone: String(formData.get("phone") ?? ""),
       email: String(formData.get("email") ?? ""),
@@ -60,6 +66,8 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
     const customer: CheckoutFormData = {
       ...result.data,
       email: result.data.email || undefined,
+      address: result.data.address || undefined,
+      deliveryDate: result.data.deliveryDate || undefined,
       notes: result.data.notes || undefined,
     };
 
@@ -98,14 +106,39 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
           {errors.email && <p className="text-xs text-[#8f2a2a]">{errors.email}</p>}
         </div>
         <div className="space-y-2">
+          <Label htmlFor="deliveryMethod">Delivery Option</Label>
+          <select
+            id="deliveryMethod"
+            name="deliveryMethod"
+            value={deliveryMethod}
+            onChange={(event) => setDeliveryMethod(event.target.value as "delivery" | "pickup")}
+            className="flex h-10 w-full rounded-xl border border-[#c2a98f]/50 bg-white px-3 py-2 text-sm text-[#2D1F16] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C62828]/40"
+          >
+            <option value="delivery">Deliver to me</option>
+            <option value="pickup">I will pick it up</option>
+          </select>
+        </div>
+        <div className={`space-y-2 ${deliveryMethod === "pickup" ? "opacity-60" : ""}`}>
           <Label htmlFor="deliveryDate">Delivery Date</Label>
-          <Input id="deliveryDate" name="deliveryDate" type="date" />
+          <Input
+            id="deliveryDate"
+            name="deliveryDate"
+            type="date"
+            disabled={deliveryMethod === "pickup"}
+            className={deliveryMethod === "pickup" ? "bg-[#ede1d3] text-[#8f7664]" : ""}
+          />
           {errors.deliveryDate && <p className="text-xs text-[#8f2a2a]">{errors.deliveryDate}</p>}
         </div>
       </div>
-      <div className="space-y-2">
+      <div className={`space-y-2 ${deliveryMethod === "pickup" ? "opacity-60" : ""}`}>
         <Label htmlFor="address">Delivery Address</Label>
-        <Input id="address" name="address" placeholder="Kira, Wakiso..." />
+        <Input
+          id="address"
+          name="address"
+          placeholder="Kira, Wakiso..."
+          disabled={deliveryMethod === "pickup"}
+          className={deliveryMethod === "pickup" ? "bg-[#ede1d3] text-[#8f7664]" : ""}
+        />
         {errors.address && <p className="text-xs text-[#8f2a2a]">{errors.address}</p>}
       </div>
       <div className="space-y-2">
@@ -122,4 +155,3 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
     </form>
   );
 }
-

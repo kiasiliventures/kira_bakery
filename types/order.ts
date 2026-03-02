@@ -11,11 +11,12 @@ export type CartItem = {
 };
 
 export type CheckoutFormData = {
+  deliveryMethod: "delivery" | "pickup";
   customerName: string;
   phone: string;
   email?: string;
-  address: string;
-  deliveryDate: string;
+  address?: string;
+  deliveryDate?: string;
   notes?: string;
 };
 
@@ -38,4 +39,3 @@ export type Order = {
   customer: CheckoutFormData;
   cakeRequest?: CakeBuilderFormData;
 };
-

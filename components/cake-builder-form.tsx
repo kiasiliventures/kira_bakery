@@ -55,6 +55,7 @@ export function CakeBuilderForm() {
       status: "Pending",
       totalUGX: result.data.budgetMax,
       customer: {
+        deliveryMethod: "pickup",
         customerName: "Guest Cake Request",
         phone: "+256000000000",
         address: "Kira",
@@ -133,4 +134,3 @@ export function CakeBuilderForm() {
     </Card>
   );
 }
-

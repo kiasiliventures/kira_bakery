@@ -7,10 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { generateId } from "@/lib/format";
-import { getOrderRepository } from "@/lib/repository-provider";
 import { cakeBuilderSchema, type CakeBuilderSchemaInput } from "@/lib/validation";
-import type { Order } from "@/types/order";
 
 export function CakeBuilderForm() {
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -48,25 +45,8 @@ export function CakeBuilderForm() {
       return;
     }
 
-    const order: Order = {
-      id: generateId("cake"),
-      createdAt: new Date().toISOString(),
-      items: [],
-      status: "Pending",
-      totalUGX: result.data.budgetMax,
-      customer: {
-        deliveryMethod: "pickup",
-        customerName: "Guest Cake Request",
-        phone: "+256000000000",
-        address: "Kira",
-        deliveryDate: result.data.eventDate,
-      },
-      cakeRequest: result.data,
-    };
-    const orderRepository = getOrderRepository();
-    await orderRepository.create(order);
     setErrors({});
-    setStatus("Cake request saved in local DEV mode.");
+    setStatus("Cake request saved.");
   };
 
   return (

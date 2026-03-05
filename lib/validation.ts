@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { PRODUCT_CATEGORIES } from "@/types/product";
 
 export const checkoutSchema = z
   .object({
@@ -49,15 +48,5 @@ export const cakeBuilderSchema = z
     path: ["budgetMax"],
   });
 
-export const adminProductSchema = z.object({
-  name: z.string().min(2),
-  description: z.string().min(8),
-  category: z.enum(PRODUCT_CATEGORIES),
-  priceUGX: z.coerce.number().int().min(3000),
-  image: z.string().url("Use a valid image URL"),
-  soldOut: z.coerce.boolean().default(false),
-});
-
 export type CheckoutSchemaInput = z.infer<typeof checkoutSchema>;
 export type CakeBuilderSchemaInput = z.infer<typeof cakeBuilderSchema>;
-export type AdminProductSchemaInput = z.infer<typeof adminProductSchema>;

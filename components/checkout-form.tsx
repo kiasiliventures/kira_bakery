@@ -7,10 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { formatUGX, generateId } from "@/lib/format";
-import { getOrderRepository } from "@/lib/repository-provider";
+import { formatUGX } from "@/lib/format";
 import { checkoutSchema, type CheckoutSchemaInput } from "@/lib/validation";
-import type { CheckoutFormData, Order } from "@/types/order";
 
 type CheckoutFormProps = {
   compact?: boolean;
@@ -54,7 +52,11 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
     const response = await fetch("/api/checkout", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(result.data),
+      body: JSON.stringify({
+        customer: result.data,
+        items,
+        totalUGX: subtotalUGX,
+      }),
     });
 
     if (!response.ok) {
@@ -63,28 +65,9 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
       return;
     }
 
-    const customer: CheckoutFormData = {
-      ...result.data,
-      email: result.data.email || undefined,
-      address: result.data.address || undefined,
-      deliveryDate: result.data.deliveryDate || undefined,
-      notes: result.data.notes || undefined,
-    };
-
-    const order: Order = {
-      id: generateId("order"),
-      createdAt: new Date().toISOString(),
-      items,
-      status: "Pending",
-      totalUGX: subtotalUGX,
-      customer,
-    };
-
-    const repository = getOrderRepository();
-    await repository.create(order);
     clearCart();
     setIsSubmitting(false);
-    router.push("/admin");
+    router.push("/menu");
   };
 
   return (

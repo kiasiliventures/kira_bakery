@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { generateId } from "@/lib/format";
@@ -38,6 +39,21 @@ type CanonicalCheckoutItem = {
   selectedFlavor?: string;
 };
 
+type StoredCheckoutResponse = {
+  ok?: boolean;
+  id?: string;
+  message?: string;
+};
+
+type CheckoutIdempotencyRow = {
+  key: string;
+  endpoint: string;
+  request_hash: string;
+  resource_id: string | null;
+  response_status: number | null;
+  response_body: StoredCheckoutResponse | null;
+};
+
 const checkoutPayloadSchema = z.object({
   customer: checkoutSchema,
   items: z.array(
@@ -54,11 +70,45 @@ function badRequest(message: string) {
   return NextResponse.json({ message }, { status: 400 });
 }
 
+function conflict(message: string) {
+  return NextResponse.json({ message }, { status: 409 });
+}
+
 function tooManyRequests(retryAfterSeconds: number) {
   return NextResponse.json(
     { message: "Too many requests. Please wait and try again." },
     { status: 429, headers: { "Retry-After": String(retryAfterSeconds) } },
   );
+}
+
+function getIdempotencyKey(request: Request) {
+  const key = request.headers.get("Idempotency-Key")?.trim();
+  if (!key || key.length > 128) {
+    return null;
+  }
+  return key;
+}
+
+function stableSerialize(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableSerialize(entry)).join(",")}]`;
+  }
+
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>).sort(([left], [right]) =>
+      left.localeCompare(right),
+    );
+
+    return `{${entries
+      .map(([key, entryValue]) => `${JSON.stringify(key)}:${stableSerialize(entryValue)}`)
+      .join(",")}}`;
+  }
+
+  return JSON.stringify(value);
+}
+
+function buildCheckoutRequestHash(payload: z.infer<typeof checkoutPayloadSchema>) {
+  return createHash("sha256").update(stableSerialize(payload)).digest("hex");
 }
 
 function selectLegacyVariant(
@@ -177,10 +227,88 @@ async function loadCanonicalItems(
   return { items: canonicalItems };
 }
 
+async function getStoredCheckoutAttempt(key: string) {
+  const supabase = getSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("api_idempotency_keys")
+    .select("key,endpoint,request_hash,resource_id,response_status,response_body")
+    .eq("key", key)
+    .maybeSingle();
+
+  if (error) {
+    console.error("checkout_idempotency_lookup_failed", error.message);
+    return { errorResponse: NextResponse.json({ message: "Unable to place order." }, { status: 500 }) };
+  }
+
+  return { data: (data as CheckoutIdempotencyRow | null) ?? null };
+}
+
+async function finalizeCheckoutAttempt(
+  key: string,
+  status: number,
+  responseBody: StoredCheckoutResponse,
+) {
+  const supabase = getSupabaseServerClient();
+  const { error } = await supabase
+    .from("api_idempotency_keys")
+    .update({
+      response_status: status,
+      response_body: responseBody,
+      completed_at: new Date().toISOString(),
+    })
+    .eq("key", key);
+
+  if (error) {
+    console.error("checkout_idempotency_finalize_failed", error.message);
+  }
+}
+
+async function releaseCheckoutAttempt(key: string) {
+  const supabase = getSupabaseServerClient();
+  const { error } = await supabase.from("api_idempotency_keys").delete().eq("key", key);
+
+  if (error) {
+    console.error("checkout_idempotency_release_failed", error.message);
+  }
+}
+
+async function buildStoredCheckoutResponse(row: CheckoutIdempotencyRow) {
+  if (row.response_status !== null && row.response_body) {
+    return NextResponse.json(row.response_body, { status: row.response_status });
+  }
+
+  if (row.resource_id) {
+    const supabase = getSupabaseServerClient();
+    const { data, error } = await supabase
+      .from("orders")
+      .select("id")
+      .eq("id", row.resource_id)
+      .maybeSingle();
+
+    if (error) {
+      console.error("checkout_idempotency_order_recovery_failed", error.message);
+      return NextResponse.json({ message: "Unable to place order." }, { status: 500 });
+    }
+
+    if (data?.id) {
+      const responseBody = { ok: true, id: row.resource_id };
+      await finalizeCheckoutAttempt(row.key, 200, responseBody);
+      return NextResponse.json(responseBody, { status: 200 });
+    }
+  }
+
+  return conflict("This checkout is already being processed. Please wait and try again.");
+}
+
 export async function POST(request: Request) {
   const rateLimit = enforceRateLimit(request, "checkout", 12, 60_000);
   if (!rateLimit.allowed) {
     return tooManyRequests(rateLimit.retryAfterSeconds);
+  }
+
+  const idempotencyKey = getIdempotencyKey(request);
+  if (!idempotencyKey) {
+    return badRequest("Missing Idempotency-Key header");
   }
 
   const body = await request.json();
@@ -196,6 +324,23 @@ export async function POST(request: Request) {
     return badRequest("Cart cannot be empty");
   }
 
+  const requestHash = buildCheckoutRequestHash(parsed.data);
+  const existingAttempt = await getStoredCheckoutAttempt(idempotencyKey);
+  if (existingAttempt.errorResponse) {
+    return existingAttempt.errorResponse;
+  }
+
+  if (existingAttempt.data) {
+    if (
+      existingAttempt.data.endpoint !== "checkout"
+      || existingAttempt.data.request_hash !== requestHash
+    ) {
+      return conflict("Idempotency key cannot be reused with a different checkout payload.");
+    }
+
+    return buildStoredCheckoutResponse(existingAttempt.data);
+  }
+
   const canonical = await loadCanonicalItems(parsed.data.items);
   if (canonical.response) {
     return canonical.response;
@@ -205,8 +350,40 @@ export async function POST(request: Request) {
   const totalUGX = items.reduce((sum, item) => sum + item.priceUGX * item.quantity, 0);
   const orderId = generateId("order");
   const supabase = getSupabaseServerClient();
-  const { customer } = parsed.data;
 
+  const reservation = await supabase.from("api_idempotency_keys").insert({
+    key: idempotencyKey,
+    endpoint: "checkout",
+    request_hash: requestHash,
+    resource_id: orderId,
+  });
+
+  if (reservation.error) {
+    if (reservation.error.code === "23505") {
+      const retryAttempt = await getStoredCheckoutAttempt(idempotencyKey);
+      if (retryAttempt.errorResponse) {
+        return retryAttempt.errorResponse;
+      }
+
+      if (!retryAttempt.data) {
+        return NextResponse.json({ message: "Unable to place order." }, { status: 500 });
+      }
+
+      if (
+        retryAttempt.data.endpoint !== "checkout"
+        || retryAttempt.data.request_hash !== requestHash
+      ) {
+        return conflict("Idempotency key cannot be reused with a different checkout payload.");
+      }
+
+      return buildStoredCheckoutResponse(retryAttempt.data);
+    }
+
+    console.error("checkout_idempotency_reservation_failed", reservation.error.message);
+    return NextResponse.json({ message: "Unable to place order." }, { status: 500 });
+  }
+
+  const { customer } = parsed.data;
   const { error } = await supabase.rpc("place_guest_order", {
     order_id: orderId,
     order_total_ugx: totalUGX,
@@ -231,8 +408,20 @@ export async function POST(request: Request) {
 
   if (error) {
     console.error("checkout_place_guest_order_failed", error.message);
+    const recoveredAttempt = await getStoredCheckoutAttempt(idempotencyKey);
+    if (recoveredAttempt.data) {
+      const recoveredResponse = await buildStoredCheckoutResponse(recoveredAttempt.data);
+      if (recoveredResponse.status === 200) {
+        return recoveredResponse;
+      }
+    }
+
+    await releaseCheckoutAttempt(idempotencyKey);
     return NextResponse.json({ message: "Unable to place order." }, { status: 500 });
   }
 
-  return NextResponse.json({ ok: true, id: orderId });
+  const responseBody = { ok: true, id: orderId };
+  await finalizeCheckoutAttempt(idempotencyKey, 200, responseBody);
+
+  return NextResponse.json(responseBody, { status: 200 });
 }

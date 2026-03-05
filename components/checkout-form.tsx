@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useCart } from "@/components/providers/app-provider";
 import { Button } from "@/components/ui/button";
@@ -22,6 +22,7 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
   const [deliveryMethod, setDeliveryMethod] = useState<"delivery" | "pickup">(
     "delivery",
   );
+  const idempotencyKeyRef = useRef<string | null>(null);
 
   const onSubmit = async (formData: FormData) => {
     const raw: CheckoutSchemaInput = {
@@ -49,29 +50,42 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
     setIsSubmitting(true);
     setErrors({});
 
-    const response = await fetch("/api/checkout", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        customer: result.data,
-        items: items.map((item) => ({
-          productId: item.productId,
-          quantity: item.quantity,
-          selectedSize: item.selectedSize,
-          selectedFlavor: item.selectedFlavor,
-        })),
-      }),
-    });
+    const idempotencyKey = idempotencyKeyRef.current ?? crypto.randomUUID();
+    idempotencyKeyRef.current = idempotencyKey;
 
-    if (!response.ok) {
+    try {
+      const response = await fetch("/api/checkout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": idempotencyKey,
+        },
+        body: JSON.stringify({
+          customer: result.data,
+          items: items.map((item) => ({
+            productId: item.productId,
+            quantity: item.quantity,
+            selectedSize: item.selectedSize,
+            selectedFlavor: item.selectedFlavor,
+          })),
+        }),
+      });
+
+      const payload = (await response.json().catch(() => null)) as { message?: string } | null;
+
+      if (!response.ok) {
+        setErrors({ form: payload?.message ?? "Unable to place order. Please try again." });
+        return;
+      }
+
+      idempotencyKeyRef.current = null;
+      clearCart();
+      router.push("/menu");
+    } catch {
+      setErrors({ form: "Network issue while placing order. Retry once and we will avoid duplicates." });
+    } finally {
       setIsSubmitting(false);
-      setErrors({ form: "Server validation failed. Please review your details." });
-      return;
     }
-
-    clearCart();
-    setIsSubmitting(false);
-    router.push("/menu");
   };
 
   return (

@@ -54,8 +54,12 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         customer: result.data,
-        items,
-        totalUGX: subtotalUGX,
+        items: items.map((item) => ({
+          productId: item.productId,
+          quantity: item.quantity,
+          selectedSize: item.selectedSize,
+          selectedFlavor: item.selectedFlavor,
+        })),
       }),
     });
 

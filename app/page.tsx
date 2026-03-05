@@ -1,8 +1,94 @@
 import Image from "next/image";
 import Link from "next/link";
 import { CategoryTile } from "@/components/category-tile";
+import { mapLegacyProductRow, mapProductRow } from "@/lib/supabase/mappers";
+import { getSupabaseServerClient } from "@/lib/supabase/server";
+import { PRODUCT_CATEGORIES, type ProductCategory } from "@/types/product";
 
-export default function HomePage() {
+type HomeProductRow = {
+  category: ProductCategory;
+  image: string | null;
+  sold_out: boolean;
+};
+
+type LegacyHomeCategory = {
+  name: string;
+};
+
+type LegacyHomeProductRow = {
+  image_url: string | null;
+  is_available: boolean;
+  is_featured: boolean;
+  categories?: LegacyHomeCategory | LegacyHomeCategory[] | null;
+  product_variants?: Array<{
+    name: string;
+    price: number;
+    is_available: boolean;
+    sort_order?: number | null;
+  }> | null;
+  id: string;
+  name: string;
+  description: string;
+};
+
+async function getCategoryImages() {
+  const supabase = getSupabaseServerClient();
+  const images: Partial<Record<ProductCategory, string>> = {};
+
+  const { data, error } = await supabase
+    .from("products")
+    .select("id,name,description,category,image,sold_out,price_ugx,featured,options")
+    .order("created_at", { ascending: false });
+
+  if (error?.code === "42703") {
+    const legacy = await supabase
+      .from("products")
+      .select(
+        "id,name,description,image_url,is_available,is_featured,categories(name),product_variants(name,price,is_available,sort_order)",
+      )
+      .eq("is_published", true)
+      .order("created_at", { ascending: false });
+
+    if (legacy.error) {
+      throw new Error(legacy.error.message);
+    }
+
+    for (const row of (legacy.data ?? []) as LegacyHomeProductRow[]) {
+      const product = mapLegacyProductRow(row);
+      if (!product.soldOut && product.image && !images[product.category]) {
+        images[product.category] = product.image;
+      }
+    }
+
+    return images;
+  }
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  for (const row of (data ?? []) as HomeProductRow[]) {
+    const product = mapProductRow({
+      ...row,
+      image: row.image ?? "",
+      price_ugx: 0,
+      featured: false,
+      options: null,
+      id: "",
+      name: "",
+      description: "",
+    });
+    if (!product.soldOut && product.image && !images[product.category]) {
+      images[product.category] = product.image;
+    }
+  }
+
+  return images;
+}
+
+export default async function HomePage() {
+  const categoryImages = await getCategoryImages();
+
   return (
     <div className="space-y-12">
       <section className="relative left-1/2 right-1/2 -mx-[50vw] min-h-[560px] w-screen overflow-hidden">
@@ -54,26 +140,14 @@ export default function HomePage() {
       <section>
         <h2 className="mb-6 text-3xl text-[#2D1F16]">Browse Products</h2>
         <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-4">
-          <CategoryTile
-            name="Bread"
-            href="/menu"
-            image="https://images.unsplash.com/photo-1608198093002-ad4e005484ec?auto=format&fit=crop&w=1200&q=80"
-          />
-          <CategoryTile
-            name="Cakes"
-            href="/menu"
-            image="https://images.unsplash.com/photo-1464349095431-e9a21285b5f3?auto=format&fit=crop&w=1200&q=80"
-          />
-          <CategoryTile
-            name="Pastries"
-            href="/menu"
-            image="https://images.unsplash.com/photo-1483695028939-5bb13f8648b0?auto=format&fit=crop&w=1200&q=80"
-          />
-          <CategoryTile
-            name="Others"
-            href="/menu"
-            image="https://images.unsplash.com/photo-1488477181946-6428a0291777?auto=format&fit=crop&w=1200&q=80"
-          />
+          {PRODUCT_CATEGORIES.map((category) => (
+            <CategoryTile
+              key={category}
+              name={category}
+              href="/menu"
+              image={categoryImages[category]}
+            />
+          ))}
         </div>
       </section>
     </div>

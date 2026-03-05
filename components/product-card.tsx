@@ -1,5 +1,3 @@
-"use client";
-
 import Image from "next/image";
 import Link from "next/link";
 import { useState } from "react";
@@ -14,9 +12,6 @@ type ProductCardProps = {
   product: Product;
 };
 
-const FALLBACK_PRODUCT_IMAGE =
-  "https://images.unsplash.com/photo-1578985545062-69928b1d9587?auto=format&fit=crop&w=1200&q=80";
-
 export function ProductCard({ product }: ProductCardProps) {
   const { addItem } = useCart();
   const [imageSrc, setImageSrc] = useState(product.image);
@@ -24,15 +19,21 @@ export function ProductCard({ product }: ProductCardProps) {
   return (
     <Card className="overflow-hidden">
       <Link href={`/menu/${product.id}`} className="block">
-        <div className="relative h-52 w-full">
-          <Image
-            src={imageSrc}
-            alt={product.name}
-            fill
-            className="rounded-t-2xl object-cover"
-            sizes="(max-width: 768px) 100vw, 33vw"
-            onError={() => setImageSrc(FALLBACK_PRODUCT_IMAGE)}
-          />
+        <div className="relative h-52 w-full bg-[#f5ede4]">
+          {imageSrc ? (
+            <Image
+              src={imageSrc}
+              alt={product.name}
+              fill
+              className="rounded-t-2xl object-cover"
+              sizes="(max-width: 768px) 100vw, 33vw"
+              onError={() => setImageSrc("")}
+            />
+          ) : (
+            <div className="flex h-full items-center justify-center rounded-t-2xl text-sm text-[#8f7664]">
+              No product image
+            </div>
+          )}
         </div>
       </Link>
       <CardHeader className="pb-3">

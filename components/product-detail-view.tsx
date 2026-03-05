@@ -11,9 +11,6 @@ import { formatUGX } from "@/lib/format";
 import { getProductRepository } from "@/lib/repository-provider";
 import type { Product } from "@/types/product";
 
-const FALLBACK_PRODUCT_IMAGE =
-  "https://images.unsplash.com/photo-1578985545062-69928b1d9587?auto=format&fit=crop&w=1200&q=80";
-
 export function ProductDetailView({ id }: { id: string }) {
   const { addItem } = useCart();
   const [product, setProduct] = useState<Product | null>(null);
@@ -44,15 +41,21 @@ export function ProductDetailView({ id }: { id: string }) {
 
   return (
     <section className="grid gap-8 lg:grid-cols-2">
-      <div className="relative h-[360px] overflow-hidden rounded-2xl md:h-[480px]">
-        <Image
-          src={imageSrc || FALLBACK_PRODUCT_IMAGE}
-          alt={product.name}
-          fill
-          className="object-cover"
-          priority
-          onError={() => setImageSrc(FALLBACK_PRODUCT_IMAGE)}
-        />
+      <div className="relative h-[360px] overflow-hidden rounded-2xl bg-[#f5ede4] md:h-[480px]">
+        {imageSrc ? (
+          <Image
+            src={imageSrc}
+            alt={product.name}
+            fill
+            className="object-cover"
+            priority
+            onError={() => setImageSrc("")}
+          />
+        ) : (
+          <div className="flex h-full items-center justify-center text-sm text-[#8f7664]">
+            No product image
+          </div>
+        )}
       </div>
       <Card>
         <CardContent className="space-y-5 p-6">
@@ -104,7 +107,7 @@ export function ProductDetailView({ id }: { id: string }) {
               addItem({
                 productId: product.id,
                 name: product.name,
-                image: imageSrc || FALLBACK_PRODUCT_IMAGE,
+                image: imageSrc,
                 priceUGX: product.priceUGX,
                 selectedSize: size || undefined,
                 selectedFlavor: flavor || undefined,

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { generateId } from "@/lib/format";
+import { enforceRateLimit } from "@/lib/rate-limit";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { checkoutSchema } from "@/lib/validation";
 
@@ -53,6 +54,13 @@ function badRequest(message: string) {
   return NextResponse.json({ message }, { status: 400 });
 }
 
+function tooManyRequests(retryAfterSeconds: number) {
+  return NextResponse.json(
+    { message: "Too many requests. Please wait and try again." },
+    { status: 429, headers: { "Retry-After": String(retryAfterSeconds) } },
+  );
+}
+
 function selectLegacyVariant(
   product: LegacyCheckoutProductRow,
   selectedSize?: string,
@@ -69,10 +77,7 @@ function selectLegacyVariant(
     return availableVariants[0];
   }
 
-  return (
-    availableVariants.find((variant) => variant.name === selectedSize) ??
-    availableVariants[0]
-  );
+  return availableVariants.find((variant) => variant.name === selectedSize) ?? availableVariants[0];
 }
 
 async function loadCanonicalItems(
@@ -173,6 +178,11 @@ async function loadCanonicalItems(
 }
 
 export async function POST(request: Request) {
+  const rateLimit = enforceRateLimit(request, "checkout", 12, 60_000);
+  if (!rateLimit.allowed) {
+    return tooManyRequests(rateLimit.retryAfterSeconds);
+  }
+
   const body = await request.json();
   const parsed = checkoutPayloadSchema.safeParse(body);
   if (!parsed.success) {
@@ -197,27 +207,18 @@ export async function POST(request: Request) {
   const supabase = getSupabaseServerClient();
   const { customer } = parsed.data;
 
-  const { error: orderError } = await supabase.from("orders").insert({
-    id: orderId,
-    total_ugx: totalUGX,
-    status: "Pending",
-    delivery_method: customer.deliveryMethod,
-    customer_name: customer.customerName,
-    phone: customer.phone,
-    email: customer.email || null,
-    address: customer.address || null,
-    delivery_date: customer.deliveryDate || null,
-    notes: customer.notes || null,
-  });
-
-  if (orderError) {
-    console.error("checkout_order_insert_failed", orderError.message);
-    return NextResponse.json({ message: "Unable to place order." }, { status: 500 });
-  }
-
-  const { error: itemsError } = await supabase.from("order_items").insert(
-    items.map((item) => ({
-      order_id: orderId,
+  const { error } = await supabase.rpc("place_guest_order", {
+    order_id: orderId,
+    order_total_ugx: totalUGX,
+    order_status: "Pending",
+    order_delivery_method: customer.deliveryMethod,
+    order_customer_name: customer.customerName,
+    order_phone: customer.phone,
+    order_email: customer.email || "",
+    order_address: customer.address || "",
+    order_delivery_date: customer.deliveryDate || null,
+    order_notes: customer.notes || "",
+    order_items: items.map((item) => ({
       product_id: item.productId || null,
       name: item.name,
       image: item.image,
@@ -226,10 +227,10 @@ export async function POST(request: Request) {
       selected_size: item.selectedSize ?? null,
       selected_flavor: item.selectedFlavor ?? null,
     })),
-  );
+  });
 
-  if (itemsError) {
-    console.error("checkout_order_items_insert_failed", itemsError.message);
+  if (error) {
+    console.error("checkout_place_guest_order_failed", error.message);
     return NextResponse.json({ message: "Unable to place order." }, { status: 500 });
   }
 

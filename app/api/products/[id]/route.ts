@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { mapLegacyProductRow, mapProductRow } from "@/lib/supabase/mappers";
-import { getSupabaseServerClient } from "@/lib/supabase/server";
+import { getSupabasePublicServerClient } from "@/lib/supabase/server";
 
 type RouteContext = {
   params: Promise<{ id: string }>;
@@ -8,7 +8,7 @@ type RouteContext = {
 
 export async function GET(_: Request, { params }: RouteContext) {
   const { id } = await params;
-  const supabase = getSupabaseServerClient();
+  const supabase = getSupabasePublicServerClient();
   const { data, error } = await supabase
     .from("products")
     .select("id,name,description,category,price_ugx,image,sold_out,featured,options")
@@ -16,7 +16,6 @@ export async function GET(_: Request, { params }: RouteContext) {
     .maybeSingle();
 
   if (error?.code === "42703") {
-    // Backward compatibility for legacy schema with category/image/availability split.
     const legacy = await supabase
       .from("products")
       .select(
@@ -26,7 +25,8 @@ export async function GET(_: Request, { params }: RouteContext) {
       .maybeSingle();
 
     if (legacy.error) {
-      return NextResponse.json({ message: legacy.error.message }, { status: 500 });
+      console.error("product_legacy_read_failed", legacy.error.message);
+      return NextResponse.json({ message: "Unable to load product." }, { status: 500 });
     }
     if (!legacy.data) {
       return NextResponse.json({ message: "Product not found" }, { status: 404 });
@@ -36,7 +36,8 @@ export async function GET(_: Request, { params }: RouteContext) {
   }
 
   if (error) {
-    return NextResponse.json({ message: error.message }, { status: 500 });
+    console.error("product_read_failed", error.message);
+    return NextResponse.json({ message: "Unable to load product." }, { status: 500 });
   }
   if (!data) {
     return NextResponse.json({ message: "Product not found" }, { status: 404 });

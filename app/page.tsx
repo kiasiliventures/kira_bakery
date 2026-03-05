@@ -2,7 +2,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { CategoryTile } from "@/components/category-tile";
 import { mapLegacyProductRow, mapProductRow } from "@/lib/supabase/mappers";
-import { getSupabaseServerClient } from "@/lib/supabase/server";
+import { getSupabasePublicServerClient } from "@/lib/supabase/server";
 import { PRODUCT_CATEGORIES, type ProductCategory } from "@/types/product";
 
 type HomeProductRow = {
@@ -32,7 +32,7 @@ type LegacyHomeProductRow = {
 };
 
 async function getCategoryImages() {
-  const supabase = getSupabaseServerClient();
+  const supabase = getSupabasePublicServerClient();
   const images: Partial<Record<ProductCategory, string>> = {};
 
   const { data, error } = await supabase
@@ -50,7 +50,8 @@ async function getCategoryImages() {
       .order("created_at", { ascending: false });
 
     if (legacy.error) {
-      throw new Error(legacy.error.message);
+      console.error("home_legacy_category_images_failed", legacy.error.message);
+      return images;
     }
 
     for (const row of (legacy.data ?? []) as LegacyHomeProductRow[]) {
@@ -64,7 +65,8 @@ async function getCategoryImages() {
   }
 
   if (error) {
-    throw new Error(error.message);
+    console.error("home_category_images_failed", error.message);
+    return images;
   }
 
   for (const row of (data ?? []) as HomeProductRow[]) {

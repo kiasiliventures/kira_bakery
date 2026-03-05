@@ -1,9 +1,22 @@
 import { NextResponse } from "next/server";
-import { generateId } from "@/lib/format";
+import { enforceRateLimit } from "@/lib/rate-limit";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
+import { generateId } from "@/lib/format";
 import { cakeBuilderSchema } from "@/lib/validation";
 
+function tooManyRequests(retryAfterSeconds: number) {
+  return NextResponse.json(
+    { message: "Too many requests. Please wait and try again." },
+    { status: 429, headers: { "Retry-After": String(retryAfterSeconds) } },
+  );
+}
+
 export async function POST(request: Request) {
+  const rateLimit = enforceRateLimit(request, "cake", 8, 60_000);
+  if (!rateLimit.allowed) {
+    return tooManyRequests(rateLimit.retryAfterSeconds);
+  }
+
   const body = await request.json();
   const parsed = cakeBuilderSchema.safeParse(body);
   if (!parsed.success) {
@@ -29,7 +42,8 @@ export async function POST(request: Request) {
   });
 
   if (orderError) {
-    return NextResponse.json({ message: orderError.message }, { status: 500 });
+    console.error("cake_order_insert_failed", orderError.message);
+    return NextResponse.json({ message: "Unable to submit cake request." }, { status: 500 });
   }
 
   const { error: cakeError } = await supabase.from("cake_requests").insert({
@@ -45,7 +59,8 @@ export async function POST(request: Request) {
   });
 
   if (cakeError) {
-    return NextResponse.json({ message: cakeError.message }, { status: 500 });
+    console.error("cake_request_insert_failed", cakeError.message);
+    return NextResponse.json({ message: "Unable to submit cake request." }, { status: 500 });
   }
 
   return NextResponse.json({ ok: true, orderId, cakeRequestId });

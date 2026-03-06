@@ -1,7 +1,6 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { generateId } from "@/lib/format";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { checkoutSchema } from "@/lib/validation";
@@ -398,7 +397,7 @@ export async function POST(request: Request) {
 
   const items = canonical.items;
   const totalUGX = items.reduce((sum, item) => sum + item.priceUGX * item.quantity, 0);
-  const orderId = generateId("order");
+  const orderId = randomUUID();
   const supabase = getSupabaseServerClient();
 
   const reservation = await supabase.from("api_idempotency_keys").insert({

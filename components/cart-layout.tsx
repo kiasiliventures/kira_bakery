@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { Minus, Plus, ShoppingCart, Trash2, X } from "lucide-react";
 import { getCartLineKey, useCart } from "@/components/providers/app-provider";
 import { CheckoutForm } from "@/components/checkout-form";
@@ -12,6 +12,38 @@ import { formatUGX } from "@/lib/format";
 export function CartLayout() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const { items, subtotalUGX, removeItem, updateQuantity } = useCart();
+  const mounted = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  );
+
+  if (!mounted) {
+    return (
+      <div className="relative grid gap-6 lg:grid-cols-[1fr_380px]">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-2xl font-serif">Your Cart</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-[#5f4637]">Loading cart...</p>
+          </CardContent>
+        </Card>
+
+        <div className="hidden lg:block">
+          <Card className="sticky top-24">
+            <CardHeader>
+              <CardTitle className="font-serif text-xl">Checkout</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-sm text-[#5f4637]">Subtotal: {formatUGX(0)}</p>
+              <Button disabled>Place Order</Button>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="relative grid gap-6 lg:grid-cols-[1fr_380px]">

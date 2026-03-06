@@ -6,7 +6,16 @@ import { enforceRateLimit } from "@/lib/rate-limit";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { checkoutSchema } from "@/lib/validation";
 
-type ModernCheckoutProductRow = {
+type SharedCheckoutProductRow = {
+  id: string;
+  name: string;
+  image_url: string | null;
+  base_price: string | number;
+  stock_quantity: number;
+  is_available: boolean;
+};
+
+type LegacyCheckoutProductRow = {
   id: string;
   name: string;
   image: string;
@@ -14,19 +23,19 @@ type ModernCheckoutProductRow = {
   sold_out: boolean;
 };
 
-type LegacyCheckoutVariantRow = {
+type LegacyAdminVariantRow = {
   name: string;
   price: number;
   is_available: boolean;
   sort_order?: number | null;
 };
 
-type LegacyCheckoutProductRow = {
+type LegacyAdminProductRow = {
   id: string;
   name: string;
   image_url: string | null;
   is_available: boolean;
-  product_variants?: LegacyCheckoutVariantRow[] | null;
+  product_variants?: LegacyAdminVariantRow[] | null;
 };
 
 type CanonicalCheckoutItem = {
@@ -112,9 +121,9 @@ function buildCheckoutRequestHash(payload: z.infer<typeof checkoutPayloadSchema>
 }
 
 function selectLegacyVariant(
-  product: LegacyCheckoutProductRow,
+  product: LegacyAdminProductRow,
   selectedSize?: string,
-): LegacyCheckoutVariantRow | null {
+): LegacyAdminVariantRow | null {
   const availableVariants = (product.product_variants ?? [])
     .filter((variant) => variant.is_available)
     .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
@@ -141,19 +150,66 @@ async function loadCanonicalItems(
   const supabase = getSupabaseServerClient();
   const productIds = [...new Set(requestedItems.map((item) => item.productId))];
 
-  const { data, error } = await supabase
+  const shared = await supabase
     .from("products")
-    .select("id,name,image,price_ugx,sold_out")
+    .select("id,name,image_url,base_price,stock_quantity,is_available")
     .in("id", productIds);
 
-  if (error?.code === "42703") {
+  if (shared.error?.code === "42703") {
     const legacy = await supabase
       .from("products")
-      .select(
-        "id,name,image_url,is_available,product_variants(name,price,is_available,sort_order)",
-      )
-      .eq("is_published", true)
+      .select("id,name,image,price_ugx,sold_out")
       .in("id", productIds);
+
+    if (legacy.error?.code === "42703") {
+      const legacyAdmin = await supabase
+        .from("products")
+        .select(
+          "id,name,image_url,is_available,product_variants(name,price,is_available,sort_order)",
+        )
+        .eq("is_published", true)
+        .in("id", productIds);
+
+      if (legacyAdmin.error) {
+        console.error("checkout_legacy_admin_product_lookup_failed", legacyAdmin.error.message);
+        return {
+          response: NextResponse.json({ message: "Unable to validate cart items." }, { status: 500 }),
+        };
+      }
+
+      const products = new Map(
+        ((legacyAdmin.data ?? []) as LegacyAdminProductRow[]).map((product) => [product.id, product]),
+      );
+
+      const canonicalItems: CanonicalCheckoutItem[] = [];
+
+      for (const item of requestedItems) {
+        const product = products.get(item.productId);
+        if (!product) {
+          return { response: badRequest("One or more cart items no longer exist.") };
+        }
+        if (!product.is_available) {
+          return { response: badRequest(`${product.name} is unavailable.`) };
+        }
+
+        const variant = selectLegacyVariant(product, item.selectedSize);
+        if (!variant) {
+          return { response: badRequest(`${product.name} has no valid price configured.`) };
+        }
+
+        canonicalItems.push({
+          productId: product.id,
+          name: product.name,
+          image: product.image_url ?? "",
+          priceUGX: Math.round(Number(variant.price)),
+          quantity: item.quantity,
+          selectedSize: item.selectedSize,
+          selectedFlavor: item.selectedFlavor,
+        });
+      }
+
+      return { items: canonicalItems };
+    }
 
     if (legacy.error) {
       console.error("checkout_legacy_product_lookup_failed", legacy.error.message);
@@ -163,7 +219,6 @@ async function loadCanonicalItems(
     const products = new Map(
       ((legacy.data ?? []) as LegacyCheckoutProductRow[]).map((product) => [product.id, product]),
     );
-
     const canonicalItems: CanonicalCheckoutItem[] = [];
 
     for (const item of requestedItems) {
@@ -171,20 +226,15 @@ async function loadCanonicalItems(
       if (!product) {
         return { response: badRequest("One or more cart items no longer exist.") };
       }
-      if (!product.is_available) {
+      if (product.sold_out) {
         return { response: badRequest(`${product.name} is unavailable.`) };
-      }
-
-      const variant = selectLegacyVariant(product, item.selectedSize);
-      if (!variant) {
-        return { response: badRequest(`${product.name} has no valid price configured.`) };
       }
 
       canonicalItems.push({
         productId: product.id,
         name: product.name,
-        image: product.image_url ?? "",
-        priceUGX: Math.round(Number(variant.price)),
+        image: product.image,
+        priceUGX: product.price_ugx,
         quantity: item.quantity,
         selectedSize: item.selectedSize,
         selectedFlavor: item.selectedFlavor,
@@ -194,13 +244,13 @@ async function loadCanonicalItems(
     return { items: canonicalItems };
   }
 
-  if (error) {
-    console.error("checkout_product_lookup_failed", error.message);
+  if (shared.error) {
+    console.error("checkout_product_lookup_failed", shared.error.message);
     return { response: NextResponse.json({ message: "Unable to validate cart items." }, { status: 500 }) };
   }
 
   const products = new Map(
-    ((data ?? []) as ModernCheckoutProductRow[]).map((product) => [product.id, product]),
+    ((shared.data ?? []) as SharedCheckoutProductRow[]).map((product) => [product.id, product]),
   );
   const canonicalItems: CanonicalCheckoutItem[] = [];
 
@@ -209,15 +259,15 @@ async function loadCanonicalItems(
     if (!product) {
       return { response: badRequest("One or more cart items no longer exist.") };
     }
-    if (product.sold_out) {
+    if (!product.is_available || product.stock_quantity <= 0) {
       return { response: badRequest(`${product.name} is unavailable.`) };
     }
 
     canonicalItems.push({
       productId: product.id,
       name: product.name,
-      image: product.image,
-      priceUGX: product.price_ugx,
+      image: product.image_url ?? "",
+      priceUGX: Math.round(Number(product.base_price)),
       quantity: item.quantity,
       selectedSize: item.selectedSize,
       selectedFlavor: item.selectedFlavor,

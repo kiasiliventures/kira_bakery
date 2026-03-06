@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
-import { mapLegacyProductRow, mapProductRow } from "@/lib/supabase/mappers";
+import {
+  mapLegacyAdminProductRow,
+  mapLegacyProductRow,
+  mapSharedProductRow,
+} from "@/lib/supabase/mappers";
 import { getSupabasePublicServerClient } from "@/lib/supabase/server";
 
 type RouteContext = {
@@ -9,20 +13,38 @@ type RouteContext = {
 export async function GET(_: Request, { params }: RouteContext) {
   const { id } = await params;
   const supabase = getSupabasePublicServerClient();
-  const { data, error } = await supabase
+  const shared = await supabase
     .from("products")
-    .select("id,name,description,category,price_ugx,image,sold_out,featured,options")
+    .select("id,name,description,image_url,base_price,stock_quantity,is_available,is_featured,categories(name)")
     .eq("id", id)
     .maybeSingle();
 
-  if (error?.code === "42703") {
+  if (shared.error?.code === "42703") {
     const legacy = await supabase
       .from("products")
-      .select(
-        "id,name,description,image_url,is_available,is_featured,categories(name),product_variants(name,price,is_available,sort_order)",
-      )
+      .select("id,name,description,category,price_ugx,image,sold_out,featured,options")
       .eq("id", id)
       .maybeSingle();
+
+    if (legacy.error?.code === "42703") {
+      const legacyAdmin = await supabase
+        .from("products")
+        .select(
+          "id,name,description,image_url,is_available,is_featured,categories(name),product_variants(name,price,is_available,sort_order)",
+        )
+        .eq("id", id)
+        .maybeSingle();
+
+      if (legacyAdmin.error) {
+        console.error("product_legacy_admin_read_failed", legacyAdmin.error.message);
+        return NextResponse.json({ message: "Unable to load product." }, { status: 500 });
+      }
+      if (!legacyAdmin.data) {
+        return NextResponse.json({ message: "Product not found" }, { status: 404 });
+      }
+
+      return NextResponse.json(mapLegacyAdminProductRow(legacyAdmin.data));
+    }
 
     if (legacy.error) {
       console.error("product_legacy_read_failed", legacy.error.message);
@@ -35,13 +57,13 @@ export async function GET(_: Request, { params }: RouteContext) {
     return NextResponse.json(mapLegacyProductRow(legacy.data));
   }
 
-  if (error) {
-    console.error("product_read_failed", error.message);
+  if (shared.error) {
+    console.error("product_read_failed", shared.error.message);
     return NextResponse.json({ message: "Unable to load product." }, { status: 500 });
   }
-  if (!data) {
+  if (!shared.data) {
     return NextResponse.json({ message: "Product not found" }, { status: 404 });
   }
 
-  return NextResponse.json(mapProductRow(data));
+  return NextResponse.json(mapSharedProductRow(shared.data));
 }

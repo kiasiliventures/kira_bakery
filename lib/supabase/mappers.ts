@@ -1,7 +1,23 @@
 import type { CartItem, CheckoutFormData, Order } from "@/types/order";
 import type { Product, ProductCategory, ProductOptionSet } from "@/types/product";
 
-type ProductRow = {
+type SharedCategory = {
+  name: string;
+};
+
+type SharedProductRow = {
+  id: string;
+  name: string;
+  description: string;
+  image_url: string | null;
+  base_price: string | number;
+  stock_quantity: number;
+  is_available: boolean;
+  is_featured: boolean;
+  categories?: SharedCategory | SharedCategory[] | null;
+};
+
+type LegacyProductRow = {
   id: string;
   name: string;
   description: string;
@@ -13,10 +29,6 @@ type ProductRow = {
   options: ProductOptionSet | null;
 };
 
-type LegacyCategory = {
-  name: string;
-};
-
 type LegacyVariantRow = {
   name: string;
   price: number;
@@ -24,7 +36,11 @@ type LegacyVariantRow = {
   sort_order?: number | null;
 };
 
-type LegacyProductRow = {
+type LegacyCategory = {
+  name: string;
+};
+
+type LegacyAdminProductRow = {
   id: string;
   name: string;
   description: string;
@@ -71,7 +87,30 @@ type OrderRow = {
   cake_requests?: CakeRequestRow | CakeRequestRow[] | null;
 };
 
-export function mapProductRow(row: ProductRow): Product {
+function normalizeCategory(raw: string | undefined): ProductCategory {
+  const value = (raw ?? "").trim().toLowerCase();
+  if (value.includes("bread")) return "Bread";
+  if (value.includes("cake")) return "Cakes";
+  if (value.includes("pastr")) return "Pastries";
+  return "Others";
+}
+
+export function mapSharedProductRow(row: SharedProductRow): Product {
+  const category = Array.isArray(row.categories) ? row.categories[0] : row.categories;
+
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    category: normalizeCategory(category?.name),
+    priceUGX: Math.round(Number(row.base_price)),
+    image: row.image_url ?? "",
+    soldOut: !row.is_available || row.stock_quantity <= 0,
+    featured: row.is_featured,
+  };
+}
+
+export function mapLegacyProductRow(row: LegacyProductRow): Product {
   return {
     id: row.id,
     name: row.name,
@@ -85,15 +124,7 @@ export function mapProductRow(row: ProductRow): Product {
   };
 }
 
-function normalizeCategory(raw: string | undefined): ProductCategory {
-  const value = (raw ?? "").trim().toLowerCase();
-  if (value.includes("bread")) return "Bread";
-  if (value.includes("cake")) return "Cakes";
-  if (value.includes("pastr")) return "Pastries";
-  return "Others";
-}
-
-export function mapLegacyProductRow(row: LegacyProductRow): Product {
+export function mapLegacyAdminProductRow(row: LegacyAdminProductRow): Product {
   const category = Array.isArray(row.categories) ? row.categories[0] : row.categories;
   const availableVariants = (row.product_variants ?? [])
     .filter((variant) => variant.is_available)

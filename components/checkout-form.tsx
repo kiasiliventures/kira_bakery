@@ -16,7 +16,7 @@ type CheckoutFormProps = {
 
 export function CheckoutForm({ compact = false }: CheckoutFormProps) {
   const router = useRouter();
-  const { items, subtotalUGX, clearCart } = useCart();
+  const { items, subtotalUGX } = useCart();
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [deliveryMethod, setDeliveryMethod] = useState<"delivery" | "pickup">(
@@ -71,7 +71,13 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
         }),
       });
 
-      const payload = (await response.json().catch(() => null)) as { message?: string } | null;
+      const payload = (await response.json().catch(() => null)) as
+        | {
+            message?: string;
+            id?: string;
+            redirectUrl?: string;
+          }
+        | null;
 
       if (!response.ok) {
         setErrors({ form: payload?.message ?? "Unable to place order. Please try again." });
@@ -79,8 +85,17 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
       }
 
       idempotencyKeyRef.current = null;
-      clearCart();
-      router.push("/menu");
+      if (payload?.redirectUrl) {
+        window.location.assign(payload.redirectUrl);
+        return;
+      }
+
+      if (payload?.id) {
+        router.push(`/payment/result?orderId=${encodeURIComponent(payload.id)}`);
+        return;
+      }
+
+      setErrors({ form: "Payment link missing. Please try again." });
     } catch {
       setErrors({ form: "Network issue while placing order. Retry once and we will avoid duplicates." });
     } finally {
@@ -150,7 +165,7 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
       <div className="flex items-center justify-between">
         <p className="font-semibold text-[#2D1F16]">Total: {formatUGX(subtotalUGX)}</p>
         <Button disabled={items.length === 0 || isSubmitting}>
-          {isSubmitting ? "Placing..." : "Place Order"}
+          {isSubmitting ? "Redirecting..." : "Pay with Pesapal"}
         </Button>
       </div>
     </form>

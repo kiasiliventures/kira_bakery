@@ -1,6 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import {
+  getOrderPaymentSnapshot,
+  initiatePesapalPaymentForOrder,
+} from "@/lib/payments/order-payments";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { checkoutSchema } from "@/lib/validation";
@@ -51,6 +55,9 @@ type StoredCheckoutResponse = {
   ok?: boolean;
   id?: string;
   message?: string;
+  redirectUrl?: string;
+  orderTrackingId?: string;
+  paymentStatus?: string;
 };
 
 type CheckoutIdempotencyRow = {
@@ -321,32 +328,44 @@ async function releaseCheckoutAttempt(key: string) {
   }
 }
 
-async function buildStoredCheckoutResponse(row: CheckoutIdempotencyRow) {
+async function resumeCheckoutAttempt(row: CheckoutIdempotencyRow) {
   if (row.response_status !== null && row.response_body) {
     return NextResponse.json(row.response_body, { status: row.response_status });
   }
 
-  if (row.resource_id) {
-    const supabase = getSupabaseServerClient();
-    const { data, error } = await supabase
-      .from("orders")
-      .select("id")
-      .eq("id", row.resource_id)
-      .maybeSingle();
+  if (!row.resource_id) {
+    return conflict("This checkout is already being processed. Please wait and try again.");
+  }
 
-    if (error) {
-      console.error("checkout_idempotency_order_recovery_failed", error.message);
-      return NextResponse.json({ message: "Unable to place order." }, { status: 500 });
-    }
-
-    if (data?.id) {
-      const responseBody = { ok: true, id: row.resource_id };
+  try {
+    const payment = await initiatePesapalPaymentForOrder(row.resource_id);
+    const responseBody = {
+      ok: true,
+      id: row.resource_id,
+      redirectUrl: payment.redirectUrl,
+      orderTrackingId: payment.orderTrackingId,
+      paymentStatus: payment.paymentStatus,
+    };
+    await finalizeCheckoutAttempt(row.key, 200, responseBody);
+    return NextResponse.json(responseBody, { status: 200 });
+  } catch (error) {
+    if (error instanceof Error && error.message === "Order has already been paid.") {
+      const snapshot = await getOrderPaymentSnapshot(row.resource_id, { refresh: false });
+      const responseBody = {
+        ok: true,
+        id: row.resource_id,
+        paymentStatus: snapshot.paymentStatus,
+      };
       await finalizeCheckoutAttempt(row.key, 200, responseBody);
       return NextResponse.json(responseBody, { status: 200 });
     }
-  }
 
-  return conflict("This checkout is already being processed. Please wait and try again.");
+    console.error("checkout_payment_resume_failed", {
+      orderId: row.resource_id,
+      error: error instanceof Error ? error.message : "unknown error",
+    });
+    return NextResponse.json({ message: "Unable to initiate payment." }, { status: 500 });
+  }
 }
 
 export async function POST(request: Request) {
@@ -387,7 +406,7 @@ export async function POST(request: Request) {
       return conflict("Idempotency key cannot be reused with a different checkout payload.");
     }
 
-    return buildStoredCheckoutResponse(existingAttempt.data);
+    return resumeCheckoutAttempt(existingAttempt.data);
   }
 
   const canonical = await loadCanonicalItems(parsed.data.items);
@@ -425,7 +444,7 @@ export async function POST(request: Request) {
         return conflict("Idempotency key cannot be reused with a different checkout payload.");
       }
 
-      return buildStoredCheckoutResponse(retryAttempt.data);
+      return resumeCheckoutAttempt(retryAttempt.data);
     }
 
     console.error("checkout_idempotency_reservation_failed", reservation.error.message);
@@ -459,17 +478,31 @@ export async function POST(request: Request) {
     console.error("checkout_place_guest_order_failed", error.message);
     const recoveredAttempt = await getStoredCheckoutAttempt(idempotencyKey);
     if (recoveredAttempt.data) {
-      const recoveredResponse = await buildStoredCheckoutResponse(recoveredAttempt.data);
-      if (recoveredResponse.status === 200) {
-        return recoveredResponse;
-      }
+      return resumeCheckoutAttempt(recoveredAttempt.data);
     }
 
     await releaseCheckoutAttempt(idempotencyKey);
     return NextResponse.json({ message: "Unable to place order." }, { status: 500 });
   }
 
-  const responseBody = { ok: true, id: orderId };
+  let payment;
+  try {
+    payment = await initiatePesapalPaymentForOrder(orderId);
+  } catch (paymentError) {
+    console.error("checkout_payment_initiation_failed", {
+      orderId,
+      error: paymentError instanceof Error ? paymentError.message : "unknown error",
+    });
+    return NextResponse.json({ message: "Unable to initiate payment." }, { status: 500 });
+  }
+
+  const responseBody = {
+    ok: true,
+    id: orderId,
+    redirectUrl: payment.redirectUrl,
+    orderTrackingId: payment.orderTrackingId,
+    paymentStatus: payment.paymentStatus,
+  };
   await finalizeCheckoutAttempt(idempotencyKey, 200, responseBody);
 
   return NextResponse.json(responseBody, { status: 200 });

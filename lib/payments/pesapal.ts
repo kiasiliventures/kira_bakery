@@ -304,6 +304,10 @@ export async function submitPesapalOrderRequest(
     amountUGX: input.amountUGX,
     notificationId,
   });
+  console.info("PESAPAL_SUBMIT", {
+    merchantReference: input.orderId,
+    amount: input.amountUGX,
+  });
 
   const response = await pesapalRequest<PesapalSubmitOrderResponse>(
     "/api/Transactions/SubmitOrderRequest",

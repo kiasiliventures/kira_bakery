@@ -11,6 +11,12 @@ export async function GET(request: Request) {
     return NextResponse.json({ message: "Missing orderId." }, { status: 400 });
   }
 
+  console.info("STATUS_ROUTE", {
+    orderId,
+    refresh,
+    hint: hint ?? null,
+  });
+
   try {
     const snapshot = await getOrderPaymentSnapshot(orderId, {
       refresh,

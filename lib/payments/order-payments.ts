@@ -158,6 +158,15 @@ export async function initiatePesapalPaymentForOrder(orderId: string): Promise<I
   }
 
   const storedPaymentStatus = normalizeStoredPaymentStatus(row.payment_status);
+  console.info("PAYMENT_INIT_ATTEMPT", {
+    orderId,
+    merchantReference: row.id,
+    amount: row.total_ugx,
+    storedPaymentStatus,
+    hasExistingTrackingId: Boolean(row.order_tracking_id),
+    hasExistingRedirectUrl: Boolean(row.payment_redirect_url),
+  });
+
   if (storedPaymentStatus === "paid") {
     throw new Error("Order has already been paid.");
   }
@@ -167,6 +176,12 @@ export async function initiatePesapalPaymentForOrder(orderId: string): Promise<I
       orderId,
       orderTrackingId: row.order_tracking_id,
       paymentStatus: storedPaymentStatus,
+    });
+    console.info("PAYMENT_INIT_REUSE", {
+      orderId,
+      merchantReference: row.id,
+      amount: row.total_ugx,
+      trackingId: row.order_tracking_id,
     });
     return {
       orderId,
@@ -247,6 +262,14 @@ export async function syncPesapalPaymentForOrder(
       verified: false,
     });
   }
+
+  console.info("STATUS_CHECK", {
+    orderId: input.orderId,
+    merchantReference: row.id,
+    trackingId,
+    amount: row.total_ugx,
+    source: input.source,
+  });
 
   if (row.order_tracking_id && row.order_tracking_id !== trackingId) {
     console.error("order_payment_tracking_mismatch", {

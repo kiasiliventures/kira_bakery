@@ -337,6 +337,14 @@ async function resumeCheckoutAttempt(row: CheckoutIdempotencyRow) {
     return conflict("This checkout is already being processed. Please wait and try again.");
   }
 
+  console.info("CHECKOUT_INIT", {
+    orderId: row.resource_id,
+    merchantReference: row.resource_id,
+    amount: null,
+    isRetry: true,
+    idempotencyKey: row.key,
+  });
+
   try {
     const payment = await initiatePesapalPaymentForOrder(row.resource_id);
     const responseBody = {
@@ -418,6 +426,14 @@ export async function POST(request: Request) {
   const totalUGX = items.reduce((sum, item) => sum + item.priceUGX * item.quantity, 0);
   const orderId = randomUUID();
   const supabase = getSupabaseServerClient();
+
+  console.info("CHECKOUT_INIT", {
+    orderId,
+    merchantReference: orderId,
+    amount: totalUGX,
+    isRetry: false,
+    idempotencyKey,
+  });
 
   const reservation = await supabase.from("api_idempotency_keys").insert({
     key: idempotencyKey,

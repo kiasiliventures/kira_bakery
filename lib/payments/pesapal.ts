@@ -2,6 +2,8 @@ import "server-only";
 
 type PesapalTokenResponse = {
   token?: string;
+  status?: string;
+  message?: string;
   error?: {
     code?: string;
     message?: string;
@@ -190,8 +192,21 @@ export async function getPesapalAuthToken(forceRefresh = false): Promise<string>
   });
 
   if (!response.token) {
-    console.error("pesapal_token_request_failed", { error: response.error?.message ?? "missing token" });
-    throw new Error(response.error?.message ?? "Pesapal token request did not return a token.");
+    const providerMessage =
+      response.error?.message
+      || response.message
+      || response.status
+      || "Pesapal token request did not return a token.";
+
+    console.error("pesapal_token_request_failed", {
+      status: response.status ?? null,
+      message: response.message ?? null,
+      errorCode: response.error?.code ?? null,
+      errorType: response.error?.type ?? null,
+      errorMessage: response.error?.message ?? null,
+    });
+
+    throw new Error(providerMessage);
   }
 
   tokenCache = {

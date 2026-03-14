@@ -4,9 +4,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useCart } from "@/components/providers/app-provider";
 import { Button } from "@/components/ui/button";
+import { formatUGX } from "@/lib/format";
 
 type PaymentResultOrder = {
   orderId: string;
+  totalUGX: number;
   paymentStatus: string;
   orderTrackingId: string | null;
   paymentReference: string | null;
@@ -146,6 +148,7 @@ export function PaymentResultView() {
         {order && !isLoading && !error && (
           <div className="mt-6 space-y-2 rounded-2xl bg-white/80 p-5 text-sm text-[#3d2b1f]">
             <p>Order ID: {order.orderId}</p>
+            <p>Amount paid: {formatUGX(order.totalUGX)}</p>
             <p>Payment status: {order.paymentStatus}</p>
             <p>Verified with Pesapal: {order.verified ? "yes" : "no"}</p>
             {order.providerStatus && <p>Pesapal status: {order.providerStatus}</p>}

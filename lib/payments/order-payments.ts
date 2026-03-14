@@ -24,6 +24,14 @@ type OrderPaymentRow = {
   payment_redirect_url: string | null;
   paid_at: string | null;
   order_tracking_id: string | null;
+  order_items?: OrderPaymentItemRow[] | null;
+};
+
+type OrderPaymentItemRow = {
+  name: string;
+  quantity: number;
+  selected_size: string | null;
+  selected_flavor: string | null;
 };
 
 export type PaymentViewState = "success" | "failed" | "cancelled" | "pending";
@@ -40,6 +48,12 @@ export type OrderPaymentSnapshot = {
   viewState: PaymentViewState;
   verified: boolean;
   providerStatus: string | null;
+  items: Array<{
+    name: string;
+    quantity: number;
+    selectedSize: string | null;
+    selectedFlavor: string | null;
+  }>;
 };
 
 export type InitiatedOrderPayment = {
@@ -100,6 +114,7 @@ async function getOrderPaymentRow(orderId: string): Promise<OrderPaymentRow | nu
         "payment_redirect_url",
         "paid_at",
         "order_tracking_id",
+        "order_items(name,quantity,selected_size,selected_flavor)",
       ].join(","),
     )
     .eq("id", orderId)
@@ -134,6 +149,12 @@ function buildSnapshot(
     viewState: mapViewState(paymentStatus, options?.hint),
     verified: options?.verified ?? paymentStatus === "paid",
     providerStatus: options?.providerStatus ?? null,
+    items: (row.order_items ?? []).map((item) => ({
+      name: item.name,
+      quantity: item.quantity,
+      selectedSize: item.selected_size,
+      selectedFlavor: item.selected_flavor,
+    })),
   };
 }
 

@@ -14,6 +14,12 @@ type PaymentResultOrder = {
   viewState: "success" | "failed" | "cancelled" | "pending";
   verified: boolean;
   providerStatus: string | null;
+  items: Array<{
+    name: string;
+    quantity: number;
+    selectedSize: string | null;
+    selectedFlavor: string | null;
+  }>;
 };
 
 type PaymentStatusResponse = {
@@ -145,6 +151,29 @@ export function PaymentResultView() {
             {order.providerStatus && <p>Pesapal status: {order.providerStatus}</p>}
             {order.orderTrackingId && <p>Tracking ID: {order.orderTrackingId}</p>}
             {order.paymentReference && <p>Reference: {order.paymentReference}</p>}
+            {order.items.length > 0 && (
+              <div className="pt-2">
+                <p className="font-semibold text-[#2D1F16]">Items ordered</p>
+                <ul className="mt-2 space-y-2">
+                  {order.items.map((item, index) => (
+                    <li key={`${item.name}-${index}`} className="rounded-xl bg-[#fff8f0] px-3 py-2">
+                      <span className="font-medium">{item.quantity} x {item.name}</span>
+                      {(item.selectedSize || item.selectedFlavor) && (
+                        <span className="text-[#6a5140]">
+                          {" "}
+                          {[
+                            item.selectedSize ? `Size: ${item.selectedSize}` : null,
+                            item.selectedFlavor ? `Flavor: ${item.selectedFlavor}` : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" • ")}
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         )}
 

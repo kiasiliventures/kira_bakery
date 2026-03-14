@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useCart } from "@/components/providers/app-provider";
 import { Button } from "@/components/ui/button";
@@ -52,6 +52,7 @@ export function PaymentResultView() {
   const [payload, setPayload] = useState<PaymentStatusResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const hasClearedCartRef = useRef(false);
 
   const orderId = searchParams.get("orderId");
   const hint = searchParams.get("hint") === "cancelled" || searchParams.get("cancelled") === "1"
@@ -95,9 +96,6 @@ export function PaymentResultView() {
 
         if (!cancelled) {
           setPayload(nextPayload);
-          if (nextPayload?.order?.viewState === "success") {
-            clearCart();
-          }
         }
       } catch (nextError) {
         if (!cancelled) {
@@ -115,11 +113,20 @@ export function PaymentResultView() {
     return () => {
       cancelled = true;
     };
-  }, [clearCart, statusUrl]);
+  }, [statusUrl]);
 
   const order = payload?.order ?? null;
   const title = getTitle(order?.viewState ?? null);
   const message = getMessage(order);
+
+  useEffect(() => {
+    if (order?.viewState !== "success" || hasClearedCartRef.current) {
+      return;
+    }
+
+    clearCart();
+    hasClearedCartRef.current = true;
+  }, [clearCart, order?.viewState]);
 
   return (
     <main className="mx-auto flex min-h-[70vh] w-full max-w-3xl flex-col justify-center px-6 py-16">

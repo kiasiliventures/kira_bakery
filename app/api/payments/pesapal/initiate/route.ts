@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { initiatePesapalPaymentForOrder } from "@/lib/payments/order-payments";
+import { initiateOrderPaymentForOrder } from "@/lib/payments/order-payments";
 
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => null)) as { orderId?: string } | null;
@@ -10,7 +10,9 @@ export async function POST(request: Request) {
   }
 
   try {
-    const payment = await initiatePesapalPaymentForOrder(orderId);
+    const payment = await initiateOrderPaymentForOrder(orderId, {
+      requestOrigin: new URL(request.url).origin,
+    });
     return NextResponse.json({
       ok: true,
       id: payment.orderId,

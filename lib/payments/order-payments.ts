@@ -1,16 +1,17 @@
 import "server-only";
 
-import { getSupabaseServerClient } from "@/lib/supabase/server";
+import { getPaymentProvider, parsePaymentProviderName, type PaymentProviderName } from "@/lib/payments/config";
 import {
-  getPesapalTransactionStatus,
-  normalizePesapalPaymentState,
-  submitPesapalOrderRequest,
-  type NormalizedPesapalPaymentState,
-} from "@/lib/payments/pesapal";
+  getPaymentGateway,
+  type PaymentStatus,
+  type PaymentSyncSource,
+} from "@/lib/payments/gateway";
+import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 type OrderPaymentRow = {
   id: string;
   total_ugx: number;
+  total_price?: number | null;
   status: string;
   order_status: string | null;
   customer_name: string;
@@ -24,6 +25,7 @@ type OrderPaymentRow = {
   payment_redirect_url: string | null;
   paid_at: string | null;
   order_tracking_id: string | null;
+  created_at: string;
   order_items?: OrderPaymentItemRow[] | null;
 };
 
@@ -32,6 +34,19 @@ type OrderPaymentItemRow = {
   quantity: number;
   selected_size: string | null;
   selected_flavor: string | null;
+};
+
+type PaymentAttemptRecordInput = {
+  orderId: string;
+  provider: PaymentProviderName;
+  providerReference: string;
+  amount: number;
+  currency: string;
+  status: PaymentStatus;
+  redirectUrl?: string | null;
+  rawProviderResponse?: unknown;
+  createdAt?: string;
+  verifiedAt?: string | null;
 };
 
 export type PaymentViewState = "success" | "failed" | "cancelled" | "pending";
@@ -68,11 +83,28 @@ type SyncPaymentInput = {
   orderId: string;
   orderTrackingId?: string | null;
   merchantReference?: string | null;
-  source: "checkout" | "initiate" | "ipn" | "callback" | "status";
+  source: PaymentSyncSource;
 };
 
-function normalizeStoredPaymentStatus(paymentStatus: string | null | undefined): string {
-  return paymentStatus?.trim().toLowerCase() || "unpaid";
+function normalizeStoredPaymentStatus(paymentStatus: string | null | undefined): PaymentStatus {
+  const normalized = paymentStatus?.trim().toLowerCase();
+  if (!normalized || normalized === "unpaid") {
+    return "pending";
+  }
+
+  if (normalized === "paid" || normalized === "completed") {
+    return "paid";
+  }
+
+  if (normalized === "failed" || normalized === "payment_failed" || normalized === "reversed") {
+    return "failed";
+  }
+
+  if (normalized === "cancelled" || normalized === "canceled" || normalized === "invalid") {
+    return "cancelled";
+  }
+
+  return "pending";
 }
 
 function mapViewState(
@@ -82,7 +114,7 @@ function mapViewState(
   if (paymentStatus === "paid") {
     return "success";
   }
-  if (paymentStatus === "failed") {
+  if (paymentStatus === "failed" || paymentStatus === "payment_failed") {
     return "failed";
   }
   if (paymentStatus === "cancelled") {
@@ -102,6 +134,7 @@ async function getOrderPaymentRow(orderId: string): Promise<OrderPaymentRow | nu
       [
         "id",
         "total_ugx",
+        "total_price",
         "status",
         "order_status",
         "customer_name",
@@ -115,6 +148,7 @@ async function getOrderPaymentRow(orderId: string): Promise<OrderPaymentRow | nu
         "payment_redirect_url",
         "paid_at",
         "order_tracking_id",
+        "created_at",
         "order_items(name,quantity,selected_size,selected_flavor)",
       ].join(","),
     )
@@ -170,83 +204,57 @@ async function updateOrderPaymentRow(orderId: string, values: Partial<OrderPayme
   }
 }
 
+async function upsertPaymentAttempt(input: PaymentAttemptRecordInput) {
+  const supabase = getSupabaseServerClient();
+  const { error } = await supabase
+    .from("payment_attempts")
+    .upsert(
+      {
+        order_id: input.orderId,
+        provider: input.provider,
+        provider_reference: input.providerReference,
+        amount: input.amount,
+        currency: input.currency,
+        status: input.status,
+        redirect_url: input.redirectUrl ?? null,
+        raw_provider_response: input.rawProviderResponse ?? null,
+        created_at: input.createdAt,
+        verified_at: input.verifiedAt ?? null,
+      },
+      {
+        onConflict: "provider,provider_reference",
+      },
+    );
+
+  if (error) {
+    console.error("payment_attempt_upsert_failed", {
+      orderId: input.orderId,
+      provider: input.provider,
+      providerReference: input.providerReference,
+      error: error.message,
+    });
+    throw new Error("Unable to persist payment attempt details.");
+  }
+}
+
 function buildOrderDescription(orderId: string) {
   return `Kira Bakery order ${orderId}`;
 }
 
-export async function initiatePesapalPaymentForOrder(orderId: string): Promise<InitiatedOrderPayment> {
-  const row = await getOrderPaymentRow(orderId);
-  if (!row) {
-    throw new Error("Order not found.");
-  }
+function resolveConfiguredProviderForInitiation(row: OrderPaymentRow): PaymentProviderName {
+  const storedProvider = parsePaymentProviderName(row.payment_provider);
+  return storedProvider ?? getPaymentProvider();
+}
 
-  const storedPaymentStatus = normalizeStoredPaymentStatus(row.payment_status);
-  console.info("PAYMENT_INIT_ATTEMPT", {
-    orderId,
-    merchantReference: row.id,
-    amount: row.total_ugx,
-    storedPaymentStatus,
-    hasExistingTrackingId: Boolean(row.order_tracking_id),
-    hasExistingRedirectUrl: Boolean(row.payment_redirect_url),
-  });
-
-  if (storedPaymentStatus === "paid") {
-    throw new Error("Order has already been paid.");
-  }
-
-  if (row.order_tracking_id && row.payment_redirect_url) {
-    console.info("order_payment_initiate_reuse", {
-      orderId,
-      orderTrackingId: row.order_tracking_id,
-      paymentStatus: storedPaymentStatus,
-    });
-    console.info("PAYMENT_INIT_REUSE", {
-      orderId,
-      merchantReference: row.id,
-      amount: row.total_ugx,
-      trackingId: row.order_tracking_id,
-    });
-    return {
-      orderId,
-      redirectUrl: row.payment_redirect_url,
-      orderTrackingId: row.order_tracking_id,
-      paymentStatus: storedPaymentStatus,
-    };
-  }
-
-  const response = await submitPesapalOrderRequest({
-    orderId: row.id,
-    amountUGX: row.total_ugx,
-    description: buildOrderDescription(row.id),
-    customerName: row.customer_name,
-    phone: row.customer_phone ?? row.phone,
-    email: row.customer_email ?? row.email,
-  });
-
-  console.info("order_payment_initiate_update", {
-    orderId,
-    orderTrackingId: response.order_tracking_id,
-  });
-
-  await updateOrderPaymentRow(orderId, {
-    payment_provider: "pesapal",
-    payment_status: "pending",
-    order_tracking_id: response.order_tracking_id,
-    payment_redirect_url: response.redirect_url,
-  });
-
-  return {
-    orderId,
-    redirectUrl: response.redirect_url,
-    orderTrackingId: response.order_tracking_id,
-    paymentStatus: "pending",
-  };
+function resolveProviderForVerification(row: OrderPaymentRow): PaymentProviderName {
+  const storedProvider = parsePaymentProviderName(row.payment_provider);
+  return storedProvider ?? getPaymentProvider();
 }
 
 function resolveVerifiedPaymentStatus(
-  currentStatus: string,
-  verifiedStatus: NormalizedPesapalPaymentState,
-): string {
+  currentStatus: PaymentStatus,
+  verifiedStatus: PaymentStatus,
+): PaymentStatus {
   if (currentStatus === "paid" && verifiedStatus !== "paid") {
     return currentStatus;
   }
@@ -258,7 +266,128 @@ function resolveVerifiedPaymentStatus(
   return verifiedStatus;
 }
 
-export async function syncPesapalPaymentForOrder(
+function resolveAttemptCurrency(row: OrderPaymentRow, currency: string | null | undefined) {
+  return currency?.trim().toUpperCase() || "UGX";
+}
+
+export async function initiateOrderPaymentForOrder(
+  orderId: string,
+  options?: { requestOrigin?: string | null },
+): Promise<InitiatedOrderPayment> {
+  const row = await getOrderPaymentRow(orderId);
+  if (!row) {
+    throw new Error("Order not found.");
+  }
+
+  const providerName = resolveConfiguredProviderForInitiation(row);
+  const gateway = getPaymentGateway(providerName);
+  const storedPaymentStatus = normalizeStoredPaymentStatus(row.payment_status);
+
+  console.info("PAYMENT_INIT_ATTEMPT", {
+    orderId,
+    merchantReference: row.id,
+    amount: row.total_ugx,
+    provider: providerName,
+    storedPaymentStatus,
+    hasExistingTrackingId: Boolean(row.order_tracking_id),
+    hasExistingRedirectUrl: Boolean(row.payment_redirect_url),
+  });
+
+  if (storedPaymentStatus === "paid") {
+    throw new Error("Order has already been paid.");
+  }
+
+  if (row.payment_provider && row.payment_provider !== providerName) {
+    throw new Error("Order is assigned to a different payment provider.");
+  }
+
+  if (row.order_tracking_id && row.payment_redirect_url) {
+    await upsertPaymentAttempt({
+      orderId: row.id,
+      provider: providerName,
+      providerReference: row.order_tracking_id,
+      amount: row.total_ugx,
+      currency: "UGX",
+      status: storedPaymentStatus,
+      redirectUrl: row.payment_redirect_url,
+      rawProviderResponse: {
+        reusedExistingAttempt: true,
+        paymentReference: row.payment_reference,
+      },
+      createdAt: row.created_at,
+      verifiedAt: row.paid_at,
+    });
+
+    console.info("order_payment_initiate_reuse", {
+      orderId,
+      provider: providerName,
+      orderTrackingId: row.order_tracking_id,
+      paymentStatus: storedPaymentStatus,
+    });
+    console.info("PAYMENT_INIT_REUSE", {
+      orderId,
+      merchantReference: row.id,
+      amount: row.total_ugx,
+      provider: providerName,
+      trackingId: row.order_tracking_id,
+    });
+    return {
+      orderId,
+      redirectUrl: row.payment_redirect_url,
+      orderTrackingId: row.order_tracking_id,
+      paymentStatus: storedPaymentStatus,
+    };
+  }
+
+  const response = await gateway.initiatePayment({
+    orderId: row.id,
+    amount: row.total_ugx,
+    currency: "UGX",
+    description: buildOrderDescription(row.id),
+    customerName: row.customer_name,
+    phone: row.customer_phone ?? row.phone,
+    email: row.customer_email ?? row.email,
+    requestOrigin: options?.requestOrigin,
+  });
+
+  console.info("order_payment_initiate_update", {
+    orderId,
+    provider: providerName,
+    providerReference: response.providerReference,
+  });
+
+  await updateOrderPaymentRow(orderId, {
+    payment_provider: providerName,
+    payment_status: response.paymentStatus,
+    order_tracking_id: response.providerReference,
+    payment_redirect_url: response.redirectUrl,
+  });
+
+  await upsertPaymentAttempt({
+    orderId: row.id,
+    provider: providerName,
+    providerReference: response.providerReference,
+    amount: row.total_ugx,
+    currency: "UGX",
+    status: response.paymentStatus,
+    redirectUrl: response.redirectUrl,
+    rawProviderResponse: response.rawResponse,
+    createdAt: row.created_at,
+  });
+
+  if (!response.redirectUrl) {
+    throw new Error("Payment provider did not return a redirect URL.");
+  }
+
+  return {
+    orderId,
+    redirectUrl: response.redirectUrl,
+    orderTrackingId: response.providerReference,
+    paymentStatus: response.paymentStatus,
+  };
+}
+
+export async function syncOrderPaymentForOrder(
   input: SyncPaymentInput,
 ): Promise<OrderPaymentSnapshot> {
   if (input.merchantReference && input.merchantReference !== input.orderId) {
@@ -275,12 +404,15 @@ export async function syncPesapalPaymentForOrder(
     throw new Error("Order not found.");
   }
 
-  if (row.payment_provider && row.payment_provider !== "pesapal") {
+  const providerName = resolveProviderForVerification(row);
+  const gateway = getPaymentGateway(providerName);
+  const providerReference = input.orderTrackingId ?? row.order_tracking_id;
+
+  if (row.payment_provider && row.payment_provider !== providerName) {
     throw new Error("Order is assigned to a different payment provider.");
   }
 
-  const trackingId = input.orderTrackingId ?? row.order_tracking_id;
-  if (!trackingId) {
+  if (!providerReference) {
     return buildSnapshot(row, {
       verified: false,
     });
@@ -289,16 +421,17 @@ export async function syncPesapalPaymentForOrder(
   console.info("STATUS_CHECK", {
     orderId: input.orderId,
     merchantReference: row.id,
-    trackingId,
+    trackingId: providerReference,
     amount: row.total_ugx,
+    provider: providerName,
     source: input.source,
   });
 
-  if (row.order_tracking_id && row.order_tracking_id !== trackingId) {
+  if (row.order_tracking_id && row.order_tracking_id !== providerReference) {
     console.error("order_payment_tracking_mismatch", {
       orderId: input.orderId,
       expected: row.order_tracking_id,
-      received: trackingId,
+      received: providerReference,
       source: input.source,
     });
     throw new Error("Tracking ID does not match the stored order.");
@@ -306,43 +439,62 @@ export async function syncPesapalPaymentForOrder(
 
   console.info("order_payment_sync_start", {
     orderId: input.orderId,
-    orderTrackingId: trackingId,
+    provider: providerName,
+    orderTrackingId: providerReference,
     source: input.source,
   });
 
-  const status = await getPesapalTransactionStatus(trackingId);
-  const verifiedStatus = normalizePesapalPaymentState(status.payment_status_description);
+  const status = await gateway.verifyPayment({
+    orderId: input.orderId,
+    providerReference,
+    merchantReference: input.merchantReference,
+    source: input.source,
+  });
   const storedPaymentStatus = normalizeStoredPaymentStatus(row.payment_status);
-  const nextPaymentStatus = resolveVerifiedPaymentStatus(storedPaymentStatus, verifiedStatus);
-  const nextPaidAt = nextPaymentStatus === "paid" ? row.paid_at ?? new Date().toISOString() : row.paid_at;
+  const nextPaymentStatus = resolveVerifiedPaymentStatus(storedPaymentStatus, status.paymentStatus);
+  const nextPaidAt = nextPaymentStatus === "paid" ? row.paid_at ?? status.verifiedAt : row.paid_at;
 
   await updateOrderPaymentRow(input.orderId, {
-    payment_provider: "pesapal",
+    payment_provider: status.provider,
     payment_status: nextPaymentStatus,
-    payment_reference: status.confirmation_code ?? row.payment_reference,
+    payment_reference: status.paymentReference ?? row.payment_reference,
     paid_at: nextPaidAt,
-    order_tracking_id: trackingId,
+    order_tracking_id: status.providerReference,
+  });
+
+  await upsertPaymentAttempt({
+    orderId: row.id,
+    provider: status.provider,
+    providerReference: status.providerReference,
+    amount: status.amount ?? row.total_ugx,
+    currency: resolveAttemptCurrency(row, status.currency),
+    status: nextPaymentStatus,
+    redirectUrl: row.payment_redirect_url,
+    rawProviderResponse: status.rawResponse,
+    createdAt: row.created_at,
+    verifiedAt: nextPaidAt ?? status.verifiedAt,
   });
 
   const nextRow: OrderPaymentRow = {
     ...row,
-    payment_provider: "pesapal",
+    payment_provider: status.provider,
     payment_status: nextPaymentStatus,
-    payment_reference: status.confirmation_code ?? row.payment_reference,
+    payment_reference: status.paymentReference ?? row.payment_reference,
     paid_at: nextPaidAt,
-    order_tracking_id: trackingId,
+    order_tracking_id: status.providerReference,
   };
 
   console.info("order_payment_sync_success", {
     orderId: input.orderId,
-    orderTrackingId: trackingId,
+    provider: providerName,
+    orderTrackingId: status.providerReference,
     source: input.source,
     paymentStatus: nextPaymentStatus,
-    providerStatus: status.payment_status_description ?? null,
+    providerStatus: status.providerStatus,
   });
 
   return buildSnapshot(nextRow, {
-    providerStatus: status.payment_status_description ?? null,
+    providerStatus: status.providerStatus,
     verified: true,
   });
 }
@@ -363,7 +515,7 @@ export async function getOrderPaymentSnapshot(
   const shouldRefresh = Boolean(options?.refresh && row.order_tracking_id && paymentStatus !== "paid");
 
   if (shouldRefresh) {
-    return syncPesapalPaymentForOrder({
+    return syncOrderPaymentForOrder({
       orderId,
       orderTrackingId: row.order_tracking_id,
       source: "status",
@@ -374,3 +526,6 @@ export async function getOrderPaymentSnapshot(
     hint: options?.hint,
   });
 }
+
+export const initiatePesapalPaymentForOrder = initiateOrderPaymentForOrder;
+export const syncPesapalPaymentForOrder = syncOrderPaymentForOrder;

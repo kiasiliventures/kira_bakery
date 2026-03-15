@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import {
   getOrderPaymentSnapshot,
-  initiatePesapalPaymentForOrder,
+  initiateOrderPaymentForOrder,
 } from "@/lib/payments/order-payments";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
@@ -328,7 +328,10 @@ async function releaseCheckoutAttempt(key: string) {
   }
 }
 
-async function resumeCheckoutAttempt(row: CheckoutIdempotencyRow) {
+async function resumeCheckoutAttempt(
+  row: CheckoutIdempotencyRow,
+  requestOrigin: string,
+) {
   if (row.response_status !== null && row.response_body) {
     return NextResponse.json(row.response_body, { status: row.response_status });
   }
@@ -346,7 +349,9 @@ async function resumeCheckoutAttempt(row: CheckoutIdempotencyRow) {
   });
 
   try {
-    const payment = await initiatePesapalPaymentForOrder(row.resource_id);
+    const payment = await initiateOrderPaymentForOrder(row.resource_id, {
+      requestOrigin,
+    });
     const responseBody = {
       ok: true,
       id: row.resource_id,
@@ -377,6 +382,7 @@ async function resumeCheckoutAttempt(row: CheckoutIdempotencyRow) {
 }
 
 export async function POST(request: Request) {
+  const requestOrigin = new URL(request.url).origin;
   const rateLimit = enforceRateLimit(request, "checkout", 12, 60_000);
   if (!rateLimit.allowed) {
     return tooManyRequests(rateLimit.retryAfterSeconds);
@@ -414,7 +420,7 @@ export async function POST(request: Request) {
       return conflict("Idempotency key cannot be reused with a different checkout payload.");
     }
 
-    return resumeCheckoutAttempt(existingAttempt.data);
+    return resumeCheckoutAttempt(existingAttempt.data, requestOrigin);
   }
 
   const canonical = await loadCanonicalItems(parsed.data.items);
@@ -460,7 +466,7 @@ export async function POST(request: Request) {
         return conflict("Idempotency key cannot be reused with a different checkout payload.");
       }
 
-      return resumeCheckoutAttempt(retryAttempt.data);
+      return resumeCheckoutAttempt(retryAttempt.data, requestOrigin);
     }
 
     console.error("checkout_idempotency_reservation_failed", reservation.error.message);
@@ -494,7 +500,7 @@ export async function POST(request: Request) {
     console.error("checkout_place_guest_order_failed", error.message);
     const recoveredAttempt = await getStoredCheckoutAttempt(idempotencyKey);
     if (recoveredAttempt.data) {
-      return resumeCheckoutAttempt(recoveredAttempt.data);
+      return resumeCheckoutAttempt(recoveredAttempt.data, requestOrigin);
     }
 
     await releaseCheckoutAttempt(idempotencyKey);
@@ -503,7 +509,9 @@ export async function POST(request: Request) {
 
   let payment;
   try {
-    payment = await initiatePesapalPaymentForOrder(orderId);
+    payment = await initiateOrderPaymentForOrder(orderId, {
+      requestOrigin,
+    });
   } catch (paymentError) {
     console.error("checkout_payment_initiation_failed", {
       orderId,

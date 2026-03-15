@@ -138,15 +138,15 @@ export function PaymentResultView() {
 
   return (
     <main className="mx-auto flex min-h-[70vh] w-full max-w-3xl flex-col justify-center px-6 py-16">
-      <div className="rounded-[28px] border border-[#c9af93]/55 bg-[#fff8f0] p-8 shadow-[0_18px_45px_rgba(64,38,18,0.10)]">
-        <p className="text-sm uppercase tracking-[0.25em] text-[#8a5d38]">Pesapal Sandbox</p>
-        <h1 className="mt-3 font-serif text-4xl text-[#2D1F16]">{title}</h1>
-        <p className="mt-4 text-base leading-7 text-[#5b4431]">
+      <div className="rounded-[28px] border border-border bg-surface p-8 shadow-[var(--shadow-modal)]">
+        <p className="text-sm uppercase tracking-[0.25em] text-badge-foreground">Pesapal Sandbox</p>
+        <h1 className="mt-3 font-serif text-4xl text-foreground">{title}</h1>
+        <p className="mt-4 text-base leading-7 text-muted">
           {isLoading ? "Verifying your payment with the backend..." : error ?? message}
         </p>
 
         {order && !isLoading && !error && (
-          <div className="mt-6 space-y-2 rounded-2xl bg-white/80 p-5 text-sm text-[#3d2b1f]">
+          <div className="mt-6 space-y-2 rounded-2xl bg-surface-alt p-5 text-sm text-foreground">
             <p>Order ID: {order.orderId}</p>
             <p>Amount paid: {formatUGX(order.totalUGX)}</p>
             <p>Payment status: {order.paymentStatus}</p>
@@ -156,13 +156,13 @@ export function PaymentResultView() {
             {order.paymentReference && <p>Reference: {order.paymentReference}</p>}
             {order.items.length > 0 && (
               <div className="pt-2">
-                <p className="font-semibold text-[#2D1F16]">Items ordered</p>
+                <p className="font-semibold text-foreground">Items ordered</p>
                 <ul className="mt-2 space-y-2">
                   {order.items.map((item, index) => (
-                    <li key={`${item.name}-${index}`} className="rounded-xl bg-[#fff8f0] px-3 py-2">
+                    <li key={`${item.name}-${index}`} className="rounded-xl bg-surface px-3 py-2">
                       <span className="font-medium">{item.quantity} x {item.name}</span>
                       {(item.selectedSize || item.selectedFlavor) && (
-                        <span className="text-[#6a5140]">
+                        <span className="text-muted">
                           {" "}
                           {[
                             item.selectedSize ? `Size: ${item.selectedSize}` : null,

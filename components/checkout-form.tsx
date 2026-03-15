@@ -6,6 +6,7 @@ import { useCart } from "@/components/providers/app-provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { formatUGX } from "@/lib/format";
 import { checkoutSchema, type CheckoutSchemaInput } from "@/lib/validation";
@@ -109,30 +110,29 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
         <div className="space-y-2">
           <Label htmlFor="customerName">Full Name</Label>
           <Input id="customerName" name="customerName" placeholder="Your name" />
-          {errors.customerName && <p className="text-xs text-[#8f2a2a]">{errors.customerName}</p>}
+          {errors.customerName && <p className="text-xs text-danger">{errors.customerName}</p>}
         </div>
         <div className="space-y-2">
           <Label htmlFor="phone">Phone</Label>
           <Input id="phone" name="phone" placeholder="+256..." />
-          {errors.phone && <p className="text-xs text-[#8f2a2a]">{errors.phone}</p>}
+          {errors.phone && <p className="text-xs text-danger">{errors.phone}</p>}
         </div>
         <div className="space-y-2">
           <Label htmlFor="email">Email (optional)</Label>
           <Input id="email" name="email" type="email" placeholder="you@example.com" />
-          {errors.email && <p className="text-xs text-[#8f2a2a]">{errors.email}</p>}
+          {errors.email && <p className="text-xs text-danger">{errors.email}</p>}
         </div>
         <div className="space-y-2">
           <Label htmlFor="deliveryMethod">Delivery Option</Label>
-          <select
+          <Select
             id="deliveryMethod"
             name="deliveryMethod"
             value={deliveryMethod}
             onChange={(event) => setDeliveryMethod(event.target.value as "delivery" | "pickup")}
-            className="flex h-10 w-full rounded-xl border border-[#c2a98f]/50 bg-white px-3 py-2 text-sm text-[#2D1F16] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C62828]/40"
           >
             <option value="delivery">Deliver to me</option>
             <option value="pickup">I will pick it up</option>
-          </select>
+          </Select>
         </div>
         <div className={`space-y-2 ${deliveryMethod === "pickup" ? "opacity-60" : ""}`}>
           <Label htmlFor="deliveryDate">Delivery Date</Label>
@@ -141,9 +141,9 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
             name="deliveryDate"
             type="date"
             disabled={deliveryMethod === "pickup"}
-            className={deliveryMethod === "pickup" ? "bg-[#ede1d3] text-[#8f7664]" : ""}
+            className={deliveryMethod === "pickup" ? "bg-field-disabled text-muted-foreground" : ""}
           />
-          {errors.deliveryDate && <p className="text-xs text-[#8f2a2a]">{errors.deliveryDate}</p>}
+          {errors.deliveryDate && <p className="text-xs text-danger">{errors.deliveryDate}</p>}
         </div>
       </div>
       <div className={`space-y-2 ${deliveryMethod === "pickup" ? "opacity-60" : ""}`}>
@@ -153,17 +153,17 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
           name="address"
           placeholder="Kira, Wakiso..."
           disabled={deliveryMethod === "pickup"}
-          className={deliveryMethod === "pickup" ? "bg-[#ede1d3] text-[#8f7664]" : ""}
+          className={deliveryMethod === "pickup" ? "bg-field-disabled text-muted-foreground" : ""}
         />
-        {errors.address && <p className="text-xs text-[#8f2a2a]">{errors.address}</p>}
+        {errors.address && <p className="text-xs text-danger">{errors.address}</p>}
       </div>
       <div className="space-y-2">
         <Label htmlFor="notes">Notes (optional)</Label>
         <Textarea id="notes" name="notes" placeholder="Any special instructions?" />
       </div>
-      {errors.form && <p className="text-sm text-[#8f2a2a]">{errors.form}</p>}
+      {errors.form && <p className="text-sm text-danger">{errors.form}</p>}
       <div className="flex items-center justify-between">
-        <p className="font-semibold text-[#2D1F16]">Total: {formatUGX(subtotalUGX)}</p>
+        <p className="font-semibold text-foreground">Total: {formatUGX(subtotalUGX)}</p>
         <Button disabled={items.length === 0 || isSubmitting}>
           {isSubmitting ? "Redirecting..." : "Pay with Pesapal"}
         </Button>

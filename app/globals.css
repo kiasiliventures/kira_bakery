@@ -4,26 +4,98 @@
   --background: #f5e6d3;
   --foreground: #3a2a1e;
   --surface: #fff8f0;
+  --surface-alt: #f6eee4;
+  --surface-muted: #ede4da;
+  --surface-raised: rgba(255, 248, 240, 0.92);
+  --header-bg: rgba(237, 228, 218, 0.9);
+  --field: #ffffff;
+  --field-disabled: #ede1d3;
+  --border: rgba(194, 169, 143, 0.45);
+  --border-strong: rgba(143, 118, 100, 0.4);
   --accent: #940202;
+  --accent-hover: #b30303;
+  --accent-active: #6e0101;
+  --accent-disabled: #d9a5a5;
+  --accent-foreground: #fff8f0;
   --muted: #6a4f3b;
+  --muted-foreground: #8f7664;
+  --danger: #8f2a2a;
+  --danger-soft: #f4d4d4;
+  --badge: #fce9d8;
+  --badge-foreground: #7a4a2a;
+  --ring: rgba(198, 40, 40, 0.38);
+  --gradient-category-fallback: linear-gradient(135deg, #f3e2d2, #e4c7b1);
+  --shadow-soft: 0 6px 18px rgba(53, 35, 24, 0.12);
+  --shadow-card: 0 10px 30px rgba(76, 43, 24, 0.08);
+  --shadow-brand: 0 10px 22px rgba(148, 2, 2, 0.25);
+  --shadow-modal: 0 18px 45px rgba(64, 38, 18, 0.1);
+}
+
+[data-theme="dark"] {
+  --background: #171311;
+  --foreground: #f5eadf;
+  --surface: #221b18;
+  --surface-alt: #2a211e;
+  --surface-muted: #312824;
+  --surface-raised: rgba(34, 27, 24, 0.92);
+  --header-bg: rgba(23, 19, 17, 0.9);
+  --field: #1d1714;
+  --field-disabled: #342923;
+  --border: rgba(231, 203, 176, 0.18);
+  --border-strong: rgba(231, 203, 176, 0.28);
+  --accent: #cf5244;
+  --accent-hover: #e76556;
+  --accent-active: #b94336;
+  --accent-disabled: #7c4c47;
+  --accent-foreground: #fff7f2;
+  --muted: #d4b69b;
+  --muted-foreground: #aa8f78;
+  --danger: #ffb0a6;
+  --danger-soft: rgba(143, 42, 42, 0.28);
+  --badge: rgba(176, 106, 60, 0.2);
+  --badge-foreground: #ffd7b5;
+  --ring: rgba(231, 101, 86, 0.4);
+  --gradient-category-fallback: linear-gradient(135deg, #4e3d35, #2b221e);
+  --shadow-soft: 0 10px 24px rgba(0, 0, 0, 0.28);
+  --shadow-card: 0 18px 38px rgba(0, 0, 0, 0.24);
+  --shadow-brand: 0 12px 26px rgba(185, 67, 54, 0.3);
+  --shadow-modal: 0 24px 54px rgba(0, 0, 0, 0.32);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-surface: var(--surface);
-  --color-bakery-red: #940202;
-  --color-bakery-red-hover: #b30303;
-  --color-bakery-red-active: #6e0101;
-  --color-bakery-red-disabled: #d9a5a5;
+  --color-surface-alt: var(--surface-alt);
+  --color-surface-muted: var(--surface-muted);
+  --color-surface-raised: var(--surface-raised);
+  --color-field: var(--field);
+  --color-field-disabled: var(--field-disabled);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-badge: var(--badge);
+  --color-badge-foreground: var(--badge-foreground);
   --font-sans: var(--font-inter);
   --font-serif: var(--font-playfair);
+}
+
+html {
+  background: var(--background);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-inter), sans-serif;
+  transition:
+    background-color 200ms ease,
+    color 200ms ease;
 }
 
 h1,
@@ -31,4 +103,9 @@ h2,
 h3,
 h4 {
   font-family: var(--font-playfair), serif;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  color: var(--foreground);
 }

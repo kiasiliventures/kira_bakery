@@ -29,7 +29,7 @@ const classItems = [
 export default function ClassesPage() {
   return (
     <div className="space-y-6">
-      <h1 className="text-4xl text-[#2D1F16]">Baking Classes</h1>
+      <h1 className="text-4xl text-foreground">Baking Classes</h1>
       <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
         {classItems.map((item) => (
           <Card key={item.id} className="overflow-hidden">
@@ -40,7 +40,7 @@ export default function ClassesPage() {
               <CardTitle className="font-serif text-2xl">{item.title}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <p className="text-[#5f4637]">{item.description}</p>
+              <p className="text-muted">{item.description}</p>
               <Button>Book Now</Button>
             </CardContent>
           </Card>
@@ -49,4 +49,3 @@ export default function ClassesPage() {
     </div>
   );
 }
-

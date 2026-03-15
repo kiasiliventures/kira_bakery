@@ -119,19 +119,13 @@ export default async function HomePage() {
             <div className="flex flex-wrap gap-3">
               <Link
                 href="/menu"
-                className="inline-flex h-12 items-center justify-center rounded-2xl px-8 text-base font-semibold text-white shadow-[0_10px_22px_rgba(148,2,2,0.25)] transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#940202]/35 focus-visible:ring-offset-2"
-                style={{ backgroundColor: "#940202", color: "#FFFFFF" }}
+                className="inline-flex h-12 items-center justify-center rounded-2xl bg-accent px-8 text-base font-semibold text-accent-foreground shadow-[var(--shadow-brand)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-[var(--accent-hover)] active:translate-y-0 active:bg-[var(--accent-active)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 focus-visible:ring-offset-2"
               >
                 Order Now
               </Link>
               <Link
                 href="/menu"
-                className="inline-flex h-12 items-center justify-center rounded-2xl border-2 px-8 text-base font-semibold shadow-[0_6px_16px_rgba(58,42,30,0.08)] transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#940202]/35 focus-visible:ring-offset-2"
-                style={{
-                  borderColor: "#940202",
-                  backgroundColor: "#FFF8F0",
-                  color: "#940202",
-                }}
+                className="inline-flex h-12 items-center justify-center rounded-2xl border-2 border-accent bg-surface px-8 text-base font-semibold text-accent shadow-[var(--shadow-soft)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-surface-alt hover:border-[var(--accent-hover)] hover:text-[var(--accent-hover)] active:translate-y-0 active:border-[var(--accent-active)] active:text-[var(--accent-active)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 focus-visible:ring-offset-2"
               >
                 View Menu
               </Link>
@@ -142,7 +136,7 @@ export default async function HomePage() {
       </section>
 
       <section>
-        <h2 className="mb-6 text-3xl text-[#2D1F16]">Browse Products</h2>
+        <h2 className="mb-6 text-3xl text-foreground">Browse Products</h2>
         <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-4">
           {PRODUCT_CATEGORIES.map((category) => (
             <CategoryTile

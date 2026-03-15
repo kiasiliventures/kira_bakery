@@ -67,7 +67,7 @@ export function CakeBuilderForm() {
               <option value="Red Velvet">Red Velvet</option>
               <option value="Lemon">Lemon</option>
             </Select>
-            {errors.flavor && <p className="text-xs text-[#8f2a2a]">{errors.flavor}</p>}
+            {errors.flavor && <p className="text-xs text-danger">{errors.flavor}</p>}
           </div>
           <div className="space-y-2">
             <Label htmlFor="size">Size</Label>
@@ -79,17 +79,17 @@ export function CakeBuilderForm() {
               <option value="2kg">2kg</option>
               <option value="3kg">3kg</option>
             </Select>
-            {errors.size && <p className="text-xs text-[#8f2a2a]">{errors.size}</p>}
+            {errors.size && <p className="text-xs text-danger">{errors.size}</p>}
           </div>
           <div className="space-y-2 md:col-span-2">
             <Label htmlFor="message">Cake Message</Label>
             <Textarea id="message" name="message" placeholder="Happy Birthday Amina!" />
-            {errors.message && <p className="text-xs text-[#8f2a2a]">{errors.message}</p>}
+            {errors.message && <p className="text-xs text-danger">{errors.message}</p>}
           </div>
           <div className="space-y-2">
             <Label htmlFor="eventDate">Event Date</Label>
             <Input id="eventDate" name="eventDate" type="date" />
-            {errors.eventDate && <p className="text-xs text-[#8f2a2a]">{errors.eventDate}</p>}
+            {errors.eventDate && <p className="text-xs text-danger">{errors.eventDate}</p>}
           </div>
           <div className="space-y-2">
             <Label htmlFor="referenceImage">Reference Image Upload</Label>
@@ -98,17 +98,17 @@ export function CakeBuilderForm() {
           <div className="space-y-2">
             <Label htmlFor="budgetMin">Budget Min (UGX)</Label>
             <Input id="budgetMin" name="budgetMin" type="number" min={50000} />
-            {errors.budgetMin && <p className="text-xs text-[#8f2a2a]">{errors.budgetMin}</p>}
+            {errors.budgetMin && <p className="text-xs text-danger">{errors.budgetMin}</p>}
           </div>
           <div className="space-y-2">
             <Label htmlFor="budgetMax">Budget Max (UGX)</Label>
             <Input id="budgetMax" name="budgetMax" type="number" min={60000} />
-            {errors.budgetMax && <p className="text-xs text-[#8f2a2a]">{errors.budgetMax}</p>}
+            {errors.budgetMax && <p className="text-xs text-danger">{errors.budgetMax}</p>}
           </div>
           <div className="md:col-span-2">
             <Button>Submit Cake Request</Button>
           </div>
-          {status && <p className="text-sm text-[#5f4637] md:col-span-2">{status}</p>}
+          {status && <p className="text-sm text-muted md:col-span-2">{status}</p>}
         </form>
       </CardContent>
     </Card>

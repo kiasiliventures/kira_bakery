@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter, Playfair_Display } from "next/font/google";
 import { Analytics } from "@vercel/analytics/react";
 import { AppProvider } from "@/components/providers/app-provider";
@@ -17,10 +17,42 @@ const playfair = Playfair_Display({
   subsets: ["latin"],
 });
 
+const themeScript = `
+  (() => {
+    try {
+      const storedTheme = window.localStorage.getItem("kira.theme");
+      const resolvedTheme =
+        storedTheme === "light" || storedTheme === "dark"
+          ? storedTheme
+          : window.matchMedia("(prefers-color-scheme: dark)").matches
+            ? "dark"
+            : "light";
+
+      document.documentElement.dataset.theme = resolvedTheme;
+      document.documentElement.style.colorScheme = resolvedTheme;
+
+      const themeColorMeta = document.querySelector('meta[name="theme-color"]');
+      if (themeColorMeta) {
+        themeColorMeta.setAttribute(
+          "content",
+          resolvedTheme === "dark" ? "#171311" : "#f5e6d3",
+        );
+      }
+    } catch {}
+  })();
+`;
+
 export const metadata: Metadata = {
   title: "KiRA Bakery",
   description: "Delicious baked fresh daily in Kira, Uganda.",
   manifest: "/manifest.webmanifest",
+};
+
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f5e6d3" },
+    { media: "(prefers-color-scheme: dark)", color: "#171311" },
+  ],
 };
 
 export default function RootLayout({
@@ -29,8 +61,14 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body className={`${inter.variable} ${playfair.variable} antialiased`}>
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <meta name="theme-color" content="#f5e6d3" />
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+      </head>
+      <body
+        className={`${inter.variable} ${playfair.variable} min-h-screen bg-background text-foreground antialiased`}
+      >
         <AppProvider>
           <PwaRegister />
           <SiteHeader />

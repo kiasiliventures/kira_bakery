@@ -36,12 +36,12 @@ export function ProductDetailView({ id }: { id: string }) {
   }, [id]);
 
   if (!product) {
-    return <p className="text-[#5f4637]">Loading product...</p>;
+    return <p className="text-muted">Loading product...</p>;
   }
 
   return (
     <section className="grid gap-8 lg:grid-cols-2">
-      <div className="relative h-[360px] overflow-hidden rounded-2xl bg-[#f5ede4] md:h-[480px]">
+      <div className="relative h-[360px] overflow-hidden rounded-2xl bg-surface-alt md:h-[480px]">
         {imageSrc ? (
           <Image
             src={imageSrc}
@@ -52,20 +52,20 @@ export function ProductDetailView({ id }: { id: string }) {
             onError={() => setImageSrc("")}
           />
         ) : (
-          <div className="flex h-full items-center justify-center text-sm text-[#8f7664]">
+          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
             No product image
           </div>
         )}
       </div>
       <Card>
         <CardContent className="space-y-5 p-6">
-          <p className="text-sm uppercase tracking-wide text-[#7A4A2A]">{product.category}</p>
-          <h1 className="font-serif text-4xl text-[#2D1F16]">{product.name}</h1>
-          <p className="text-[#5f4637]">{product.description}</p>
-          <p className="text-2xl font-semibold text-[#2D1F16]">{formatUGX(product.priceUGX)}</p>
+          <p className="text-sm uppercase tracking-wide text-badge-foreground">{product.category}</p>
+          <h1 className="font-serif text-4xl text-foreground">{product.name}</h1>
+          <p className="text-muted">{product.description}</p>
+          <p className="text-2xl font-semibold text-foreground">{formatUGX(product.priceUGX)}</p>
           {product.options?.sizes && (
             <div className="space-y-2">
-              <label className="text-sm font-medium">Size</label>
+              <label className="text-sm font-medium text-foreground">Size</label>
               <Select value={size} onChange={(event) => setSize(event.target.value)}>
                 {product.options.sizes.map((value) => (
                   <option key={value} value={value}>
@@ -77,7 +77,7 @@ export function ProductDetailView({ id }: { id: string }) {
           )}
           {product.options?.flavors && (
             <div className="space-y-2">
-              <label className="text-sm font-medium">Flavor</label>
+              <label className="text-sm font-medium text-foreground">Flavor</label>
               <Select value={flavor} onChange={(event) => setFlavor(event.target.value)}>
                 {product.options.flavors.map((value) => (
                   <option key={value} value={value}>
@@ -88,7 +88,7 @@ export function ProductDetailView({ id }: { id: string }) {
             </div>
           )}
           <div className="space-y-2">
-            <label className="text-sm font-medium">Quantity</label>
+            <label className="text-sm font-medium text-foreground">Quantity</label>
             <Select
               value={String(quantity)}
               onChange={(event) => setQuantity(Number(event.target.value))}
@@ -117,7 +117,7 @@ export function ProductDetailView({ id }: { id: string }) {
           >
             {product.soldOut ? "Sold Out" : "Add to Cart"}
           </Button>
-          <Link href="/menu" className="inline-block text-sm text-[#7A4A2A] underline">
+          <Link href="/menu" className="inline-block text-sm text-accent underline underline-offset-4">
             Back to menu
           </Link>
         </CardContent>

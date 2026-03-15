@@ -19,7 +19,7 @@ export function ProductCard({ product }: ProductCardProps) {
   return (
     <Card className="overflow-hidden">
       <Link href={`/menu/${product.id}`} className="block">
-        <div className="relative h-52 w-full bg-[#f5ede4]">
+        <div className="relative h-52 w-full bg-surface-alt">
           {imageSrc ? (
             <Image
               src={imageSrc}
@@ -30,7 +30,7 @@ export function ProductCard({ product }: ProductCardProps) {
               onError={() => setImageSrc("")}
             />
           ) : (
-            <div className="flex h-full items-center justify-center rounded-t-2xl text-sm text-[#8f7664]">
+            <div className="flex h-full items-center justify-center rounded-t-2xl text-sm text-muted-foreground">
               No product image
             </div>
           )}
@@ -40,13 +40,13 @@ export function ProductCard({ product }: ProductCardProps) {
         <div className="flex items-start justify-between gap-2">
           <CardTitle className="text-lg">{product.name}</CardTitle>
           {product.soldOut && (
-            <Badge className="bg-[#f4d4d4] text-[#8f2a2a]">Sold Out</Badge>
+            <Badge className="bg-danger-soft text-danger">Sold Out</Badge>
           )}
         </div>
-        <p className="text-sm text-[#5f4637]">{product.description}</p>
+        <p className="text-sm text-muted">{product.description}</p>
       </CardHeader>
       <CardContent className="pt-0">
-        <p className="font-semibold text-[#2D1F16]">{formatUGX(product.priceUGX)}</p>
+        <p className="font-semibold text-foreground">{formatUGX(product.priceUGX)}</p>
       </CardContent>
       <CardFooter className="pt-0">
         <Button

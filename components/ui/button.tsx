@@ -4,16 +4,16 @@ import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-xl text-sm font-semibold tracking-[0.01em] transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#940202]/35 focus-visible:ring-offset-2 focus-visible:ring-offset-background aria-disabled:pointer-events-none aria-disabled:opacity-70 disabled:pointer-events-none disabled:opacity-70",
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-xl text-sm font-semibold tracking-[0.01em] transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 focus-visible:ring-offset-2 focus-visible:ring-offset-background aria-disabled:pointer-events-none aria-disabled:opacity-70 disabled:pointer-events-none disabled:opacity-70",
   {
     variants: {
       variant: {
         default:
-          "bg-[#940202] text-white shadow-[0_8px_18px_rgba(148,2,2,0.22)] hover:-translate-y-0.5 hover:bg-[#B30303] hover:shadow-[0_12px_24px_rgba(148,2,2,0.28)] active:translate-y-0 active:bg-[#6E0101] disabled:bg-[#D9A5A5] disabled:text-white",
+          "bg-accent text-accent-foreground shadow-[var(--shadow-brand)] hover:-translate-y-0.5 hover:bg-[var(--accent-hover)] active:translate-y-0 active:bg-[var(--accent-active)] disabled:bg-[var(--accent-disabled)] disabled:text-accent-foreground",
         outline:
-          "border-2 border-[#940202] bg-[#FFF8F0] text-[#940202] shadow-[0_5px_14px_rgba(58,42,30,0.07)] hover:-translate-y-0.5 hover:bg-[#fff2e5] hover:border-[#B30303] hover:text-[#B30303] active:translate-y-0 active:border-[#6E0101] active:text-[#6E0101] disabled:border-[#D9A5A5] disabled:text-[#D9A5A5]",
+          "border-2 border-accent bg-surface text-accent shadow-[var(--shadow-soft)] hover:-translate-y-0.5 hover:bg-surface-alt hover:border-[var(--accent-hover)] hover:text-[var(--accent-hover)] active:translate-y-0 active:border-[var(--accent-active)] active:text-[var(--accent-active)] disabled:border-[var(--accent-disabled)] disabled:text-[var(--accent-disabled)]",
         ghost:
-          "bg-transparent text-[#3A2A1E] hover:bg-[#edd8c2] hover:text-[#940202] active:bg-[#e4ccb2]",
+          "bg-transparent text-foreground hover:bg-surface-muted hover:text-accent active:bg-surface-alt",
       },
       size: {
         default: "h-11 px-5 text-[0.95rem]",

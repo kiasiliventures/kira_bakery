@@ -19,7 +19,7 @@ export function CartLink() {
   return (
     <Link
       href="/cart"
-      className="inline-flex min-w-14 items-center justify-center gap-2 rounded-xl border border-[#c9b8a7] bg-[#f6eee4] px-3 py-2 text-sm text-[#2D1F16]"
+      className="inline-flex min-w-14 items-center justify-center gap-2 rounded-xl border border-border bg-surface-alt px-3 py-2 text-sm text-foreground shadow-[var(--shadow-soft)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-surface"
     >
       <ShoppingBag size={16} />
       <span>{mounted ? itemCount : 0}</span>

@@ -15,15 +15,15 @@ export default function ContactPage() {
             className="object-cover"
           />
           <div className="absolute inset-0 bg-black/25" />
-          <p className="absolute left-4 top-4 rounded-full bg-white/90 px-3 py-1 text-xs font-semibold">
+          <p className="absolute left-4 top-4 rounded-full bg-background/90 px-3 py-1 text-xs font-semibold text-foreground">
             Map Placeholder
           </p>
         </div>
         <CardHeader>
           <CardTitle className="font-serif text-3xl">Contact KiRA Bakery</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-2 text-[#5f4637]">
-          <p className="font-medium text-[#2D1F16]">KiRA Bakery</p>
+        <CardContent className="space-y-2 text-muted">
+          <p className="font-medium text-foreground">KiRA Bakery</p>
           <p>Kito village, Mamerito Mugerwa Road, Kira</p>
           <p>Phone: +256774624180</p>
           <p>Email: kirabakery@gmail.com</p>
@@ -42,7 +42,7 @@ export default function ContactPage() {
               WhatsApp
             </Button>
           </Link>
-          <p className="text-sm text-[#5f4637]">
+          <p className="text-sm text-muted">
             We usually respond quickly on WhatsApp for cake and bulk orders.
           </p>
         </CardContent>
@@ -50,4 +50,3 @@ export default function ContactPage() {
     </div>
   );
 }
-

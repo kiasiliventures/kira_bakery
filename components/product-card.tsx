@@ -69,6 +69,7 @@ export function ProductCard({ product }: ProductCardProps) {
               name: product.name,
               image: imageSrc,
               priceUGX: product.priceUGX,
+              stockQuantity: product.stockQuantity,
             })
           }
         >

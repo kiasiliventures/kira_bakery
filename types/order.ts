@@ -6,6 +6,7 @@ export type CartItem = {
   image: string;
   priceUGX: number;
   quantity: number;
+  stockQuantity?: number;
   selectedSize?: string;
   selectedFlavor?: string;
 };

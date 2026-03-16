@@ -49,6 +49,16 @@ export function getCartLineKey(item: {
   return `${item.productId}::${item.selectedSize ?? ""}::${item.selectedFlavor ?? ""}`;
 }
 
+function clampQuantity(quantity: number, stockQuantity?: number) {
+  const normalizedQuantity = Math.max(1, quantity);
+
+  if (typeof stockQuantity !== "number" || stockQuantity <= 0) {
+    return normalizedQuantity;
+  }
+
+  return Math.min(normalizedQuantity, stockQuantity);
+}
+
 type ThemeContextValue = {
   theme: Theme;
   setTheme: (theme: Theme) => void;
@@ -141,14 +151,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
         if (existingIndex >= 0) {
           const next = [...prev];
+          const nextStockQuantity =
+            item.stockQuantity ?? next[existingIndex].stockQuantity;
           next[existingIndex] = {
             ...next[existingIndex],
-            quantity: next[existingIndex].quantity + (item.quantity ?? 1),
+            stockQuantity: nextStockQuantity,
+            quantity: clampQuantity(
+              next[existingIndex].quantity + (item.quantity ?? 1),
+              nextStockQuantity,
+            ),
           };
           return next;
         }
 
-        return [...prev, { ...item, quantity: item.quantity ?? 1 }];
+        return [
+          ...prev,
+          {
+            ...item,
+            quantity: clampQuantity(item.quantity ?? 1, item.stockQuantity),
+          },
+        ];
       });
     };
 
@@ -163,7 +185,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         prev
           .map((item) =>
             getCartLineKey(item) === lineKey
-              ? { ...item, quantity: Math.max(1, quantity) }
+              ? {
+                  ...item,
+                  quantity: clampQuantity(quantity, item.stockQuantity),
+                }
               : item,
           )
           .filter((item) => item.quantity > 0),

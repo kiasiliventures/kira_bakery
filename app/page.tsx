@@ -6,7 +6,7 @@ import {
   mapLegacyProductRow,
   mapSharedProductRow,
 } from "@/lib/supabase/mappers";
-import { getSupabaseServerClient } from "@/lib/supabase/server";
+import { getSupabasePublicServerClient } from "@/lib/supabase/server";
 import { PRODUCT_CATEGORIES, type ProductCategory } from "@/types/product";
 
 type SharedHomeProductRow = {
@@ -22,7 +22,7 @@ type SharedHomeProductRow = {
 };
 
 async function getCategoryImages() {
-  const supabase = getSupabaseServerClient();
+  const supabase = getSupabasePublicServerClient();
   const images: Partial<Record<ProductCategory, string>> = {};
 
   const shared = await supabase

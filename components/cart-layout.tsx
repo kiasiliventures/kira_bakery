@@ -57,6 +57,12 @@ export function CartLayout() {
           )}
           {items.map((item) => {
             const lineKey = getCartLineKey(item);
+            const lowStockCount =
+              typeof item.stockQuantity === "number" && item.stockQuantity > 0 && item.stockQuantity < 10
+                ? item.stockQuantity
+                : null;
+            const hasReachedStockLimit =
+              typeof item.stockQuantity === "number" && item.quantity >= item.stockQuantity;
             return (
               <div
                 key={lineKey}
@@ -74,6 +80,11 @@ export function CartLayout() {
                 <div className="flex-1">
                   <p className="font-medium text-foreground">{item.name}</p>
                   <p className="text-sm text-muted">{formatUGX(item.priceUGX)}</p>
+                  {lowStockCount ? (
+                    <p className="mt-1 text-xs font-medium text-badge-foreground">
+                      Only {lowStockCount} left in stock
+                    </p>
+                  ) : null}
                   <div className="mt-2 flex items-center gap-2">
                     <button
                       className="rounded-lg border border-border bg-surface px-1.5 py-1 text-foreground transition-colors hover:bg-surface-muted"
@@ -87,6 +98,8 @@ export function CartLayout() {
                       className="rounded-lg border border-border bg-surface px-1.5 py-1 text-foreground transition-colors hover:bg-surface-muted"
                       onClick={() => updateQuantity(lineKey, item.quantity + 1)}
                       aria-label="Increase quantity"
+                      disabled={hasReachedStockLimit}
+                      title={hasReachedStockLimit ? "No more stock available" : undefined}
                     >
                       <Plus size={14} />
                     </button>

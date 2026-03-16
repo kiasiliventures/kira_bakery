@@ -4,10 +4,10 @@ import {
   mapLegacyProductRow,
   mapSharedProductRow,
 } from "@/lib/supabase/mappers";
-import { getSupabaseServerClient } from "@/lib/supabase/server";
+import { getSupabasePublicServerClient } from "@/lib/supabase/server";
 
 export async function GET() {
-  const supabase = getSupabaseServerClient();
+  const supabase = getSupabasePublicServerClient();
   const shared = await supabase
     .from("products")
     .select("id,name,description,image_url,base_price,stock_quantity,is_available,is_featured,categories(name)")

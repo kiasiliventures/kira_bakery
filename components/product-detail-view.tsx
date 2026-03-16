@@ -43,6 +43,11 @@ export function ProductDetailView({ id }: { id: string }) {
     product.stockQuantity && product.stockQuantity > 0 && product.stockQuantity < 10
       ? product.stockQuantity
       : null;
+  const maxSelectableQuantity =
+    typeof product.stockQuantity === "number" && product.stockQuantity > 0
+      ? Math.min(product.stockQuantity, 5)
+      : 5;
+  const selectedQuantity = Math.min(quantity, maxSelectableQuantity);
 
   return (
     <section className="grid gap-8 lg:grid-cols-2">
@@ -100,10 +105,10 @@ export function ProductDetailView({ id }: { id: string }) {
           <div className="space-y-2">
             <label className="text-sm font-medium text-foreground">Quantity</label>
             <Select
-              value={String(quantity)}
+              value={String(selectedQuantity)}
               onChange={(event) => setQuantity(Number(event.target.value))}
             >
-              {[1, 2, 3, 4, 5].map((value) => (
+              {Array.from({ length: maxSelectableQuantity }, (_, index) => index + 1).map((value) => (
                 <option key={value} value={value}>
                   {value}
                 </option>
@@ -119,9 +124,10 @@ export function ProductDetailView({ id }: { id: string }) {
                 name: product.name,
                 image: imageSrc,
                 priceUGX: product.priceUGX,
+                stockQuantity: product.stockQuantity,
                 selectedSize: size || undefined,
                 selectedFlavor: flavor || undefined,
-                quantity,
+                quantity: selectedQuantity,
               })
             }
           >

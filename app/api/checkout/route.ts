@@ -126,6 +126,16 @@ function buildCheckoutRequestHash(payload: z.infer<typeof checkoutPayloadSchema>
   return createHash("sha256").update(stableSerialize(payload)).digest("hex");
 }
 
+function buildInsufficientStockMessage(productName: string, stockQuantity: number) {
+  if (stockQuantity <= 0) {
+    return `${productName} is unavailable.`;
+  }
+
+  return `Only ${stockQuantity} piece${stockQuantity === 1 ? "" : "s"} of ${productName} ${
+    stockQuantity === 1 ? "is" : "are"
+  } left.`;
+}
+
 function selectLegacyVariant(
   product: LegacyAdminProductRow,
   selectedSize?: string,
@@ -266,6 +276,13 @@ async function loadCanonicalItems(
     }
     if (!product.is_available || product.stock_quantity <= 0) {
       return { response: badRequest(`${product.name} is unavailable.`) };
+    }
+    if (item.quantity > product.stock_quantity) {
+      return {
+        response: badRequest(
+          buildInsufficientStockMessage(product.name, product.stock_quantity),
+        ),
+      };
     }
 
     canonicalItems.push({

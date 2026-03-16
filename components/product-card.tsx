@@ -15,6 +15,10 @@ type ProductCardProps = {
 export function ProductCard({ product }: ProductCardProps) {
   const { addItem } = useCart();
   const [imageSrc, setImageSrc] = useState(product.image);
+  const lowStockCount =
+    product.stockQuantity && product.stockQuantity > 0 && product.stockQuantity < 10
+      ? product.stockQuantity
+      : null;
 
   return (
     <Card className="overflow-hidden">
@@ -39,9 +43,16 @@ export function ProductCard({ product }: ProductCardProps) {
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between gap-2">
           <CardTitle className="text-lg">{product.name}</CardTitle>
-          {product.soldOut && (
-            <Badge className="bg-danger-soft text-danger">Sold Out</Badge>
-          )}
+          <div className="flex flex-wrap justify-end gap-2">
+            {lowStockCount ? (
+              <Badge className="bg-badge text-badge-foreground">
+                {lowStockCount} pieces left
+              </Badge>
+            ) : null}
+            {product.soldOut ? (
+              <Badge className="bg-danger-soft text-danger">Out of Stock</Badge>
+            ) : null}
+          </div>
         </div>
         <p className="text-sm text-muted">{product.description}</p>
       </CardHeader>
@@ -61,7 +72,7 @@ export function ProductCard({ product }: ProductCardProps) {
             })
           }
         >
-          {product.soldOut ? "Unavailable" : "Add to Cart"}
+          {product.soldOut ? "Out of Stock" : "Add to Cart"}
         </Button>
       </CardFooter>
     </Card>

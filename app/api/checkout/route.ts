@@ -173,7 +173,6 @@ async function loadCanonicalItems(
         .select(
           "id,name,image_url,is_available,product_variants(name,price,is_available,sort_order)",
         )
-        .eq("is_published", true)
         .in("id", productIds);
 
       if (legacyAdmin.error) {

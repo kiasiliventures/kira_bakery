@@ -106,6 +106,7 @@ export function mapSharedProductRow(row: SharedProductRow): Product {
     priceUGX: Math.round(Number(row.base_price)),
     image: row.image_url ?? "",
     soldOut: !row.is_available || row.stock_quantity <= 0,
+    stockQuantity: row.stock_quantity,
     featured: row.is_featured,
   };
 }
@@ -126,10 +127,13 @@ export function mapLegacyProductRow(row: LegacyProductRow): Product {
 
 export function mapLegacyAdminProductRow(row: LegacyAdminProductRow): Product {
   const category = Array.isArray(row.categories) ? row.categories[0] : row.categories;
+  const sortedVariants = (row.product_variants ?? []).sort(
+    (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0),
+  );
   const availableVariants = (row.product_variants ?? [])
     .filter((variant) => variant.is_available)
     .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
-  const primaryVariant = availableVariants[0];
+  const primaryVariant = availableVariants[0] ?? sortedVariants[0];
   const sizeOptions = availableVariants.map((variant) => variant.name).filter(Boolean);
 
   return {
@@ -139,7 +143,7 @@ export function mapLegacyAdminProductRow(row: LegacyAdminProductRow): Product {
     category: normalizeCategory(category?.name),
     priceUGX: primaryVariant ? Math.round(Number(primaryVariant.price)) : 0,
     image: row.image_url ?? "",
-    soldOut: !row.is_available,
+    soldOut: !row.is_available || availableVariants.length === 0,
     featured: row.is_featured,
     options: sizeOptions.length > 0 ? { sizes: sizeOptions } : undefined,
   };

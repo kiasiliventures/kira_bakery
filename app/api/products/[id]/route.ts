@@ -4,7 +4,7 @@ import {
   mapLegacyProductRow,
   mapSharedProductRow,
 } from "@/lib/supabase/mappers";
-import { getSupabasePublicServerClient } from "@/lib/supabase/server";
+import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 type RouteContext = {
   params: Promise<{ id: string }>;
@@ -12,7 +12,7 @@ type RouteContext = {
 
 export async function GET(_: Request, { params }: RouteContext) {
   const { id } = await params;
-  const supabase = getSupabasePublicServerClient();
+  const supabase = getSupabaseServerClient();
   const shared = await supabase
     .from("products")
     .select("id,name,description,image_url,base_price,stock_quantity,is_available,is_featured,categories(name)")

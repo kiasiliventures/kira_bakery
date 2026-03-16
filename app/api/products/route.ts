@@ -4,10 +4,10 @@ import {
   mapLegacyProductRow,
   mapSharedProductRow,
 } from "@/lib/supabase/mappers";
-import { getSupabasePublicServerClient } from "@/lib/supabase/server";
+import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 export async function GET() {
-  const supabase = getSupabasePublicServerClient();
+  const supabase = getSupabaseServerClient();
   const shared = await supabase
     .from("products")
     .select("id,name,description,image_url,base_price,stock_quantity,is_available,is_featured,categories(name)")
@@ -25,7 +25,6 @@ export async function GET() {
         .select(
           "id,name,description,image_url,is_available,is_featured,categories(name),product_variants(name,price,is_available,sort_order)",
         )
-        .eq("is_published", true)
         .order("created_at", { ascending: false });
 
       if (legacyAdmin.error) {

@@ -6,7 +6,7 @@ import {
   mapLegacyProductRow,
   mapSharedProductRow,
 } from "@/lib/supabase/mappers";
-import { getSupabasePublicServerClient } from "@/lib/supabase/server";
+import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { PRODUCT_CATEGORIES, type ProductCategory } from "@/types/product";
 
 type SharedHomeProductRow = {
@@ -22,7 +22,7 @@ type SharedHomeProductRow = {
 };
 
 async function getCategoryImages() {
-  const supabase = getSupabasePublicServerClient();
+  const supabase = getSupabaseServerClient();
   const images: Partial<Record<ProductCategory, string>> = {};
 
   const shared = await supabase
@@ -42,7 +42,6 @@ async function getCategoryImages() {
         .select(
           "id,name,description,image_url,is_available,is_featured,categories(name),product_variants(name,price,is_available,sort_order)",
         )
-        .eq("is_published", true)
         .order("created_at", { ascending: false });
 
       if (legacyAdmin.error) {

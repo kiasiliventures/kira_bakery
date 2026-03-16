@@ -39,6 +39,11 @@ export function ProductDetailView({ id }: { id: string }) {
     return <p className="text-muted">Loading product...</p>;
   }
 
+  const lowStockCount =
+    product.stockQuantity && product.stockQuantity > 0 && product.stockQuantity < 10
+      ? product.stockQuantity
+      : null;
+
   return (
     <section className="grid gap-8 lg:grid-cols-2">
       <div className="relative h-[360px] overflow-hidden rounded-2xl bg-surface-alt md:h-[480px]">
@@ -63,6 +68,11 @@ export function ProductDetailView({ id }: { id: string }) {
           <h1 className="font-serif text-4xl text-foreground">{product.name}</h1>
           <p className="text-muted">{product.description}</p>
           <p className="text-2xl font-semibold text-foreground">{formatUGX(product.priceUGX)}</p>
+          {lowStockCount ? (
+            <p className="text-sm font-medium text-badge-foreground">
+              {lowStockCount} pieces left
+            </p>
+          ) : null}
           {product.options?.sizes && (
             <div className="space-y-2">
               <label className="text-sm font-medium text-foreground">Size</label>
@@ -115,7 +125,7 @@ export function ProductDetailView({ id }: { id: string }) {
               })
             }
           >
-            {product.soldOut ? "Sold Out" : "Add to Cart"}
+            {product.soldOut ? "Out of Stock" : "Add to Cart"}
           </Button>
           <Link href="/menu" className="inline-block text-sm text-accent underline underline-offset-4">
             Back to menu

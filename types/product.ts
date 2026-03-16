@@ -20,6 +20,7 @@ export type Product = {
   priceUGX: number;
   image: string;
   soldOut: boolean;
+  stockQuantity?: number;
   featured?: boolean;
   options?: ProductOptionSet;
 };

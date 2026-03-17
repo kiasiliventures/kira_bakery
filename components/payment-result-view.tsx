@@ -139,7 +139,7 @@ export function PaymentResultView() {
   return (
     <main className="mx-auto flex min-h-[70vh] w-full max-w-3xl flex-col justify-center px-6 py-16">
       <div className="rounded-[28px] border border-border bg-surface p-8 shadow-[var(--shadow-modal)]">
-        <p className="text-sm uppercase tracking-[0.25em] text-badge-foreground">Pesapal Sandbox</p>
+        <p className="text-sm uppercase tracking-[0.25em] text-badge-foreground">KiRA Bakery</p>
         <h1 className="mt-3 font-serif text-4xl text-foreground">{title}</h1>
         <p className="mt-4 text-base leading-7 text-muted">
           {isLoading ? "Verifying your payment with the backend..." : error ?? message}

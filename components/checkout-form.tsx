@@ -168,6 +168,9 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
           {isSubmitting ? "Redirecting..." : "Pay with Pesapal"}
         </Button>
       </div>
+      <p className="text-xs text-muted">
+        Mobile money charges may apply and will be shown at checkout.
+      </p>
     </form>
   );
 }

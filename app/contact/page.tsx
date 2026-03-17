@@ -1,22 +1,27 @@
-import Image from "next/image";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export default function ContactPage() {
+  const address = "Kito village, Mamerito Mugerwa Road, Kira, Uganda";
+  const mapQuery = "0.4017405,32.6518115 (KiRA Bakery)";
+  const mapSrc = `https://www.google.com/maps?q=${encodeURIComponent(mapQuery)}&z=17&output=embed`;
+  const directionsHref = "https://maps.app.goo.gl/4YwUSSHCy67GBYsG9";
+
   return (
     <div className="grid gap-6 lg:grid-cols-[1.1fr_1fr]">
       <Card className="overflow-hidden">
         <div className="relative h-[320px]">
-          <Image
-            src="https://images.unsplash.com/photo-1554118811-1e0d58224f24?auto=format&fit=crop&w=1400&q=80"
-            alt="Bakery interior map placeholder"
-            fill
-            className="object-cover"
+          <iframe
+            src={mapSrc}
+            title="KiRA Bakery location map"
+            className="h-full w-full border-0"
+            loading="lazy"
+            referrerPolicy="no-referrer-when-downgrade"
+            allowFullScreen
           />
-          <div className="absolute inset-0 bg-black/25" />
           <p className="absolute left-4 top-4 rounded-full bg-background/90 px-3 py-1 text-xs font-semibold text-foreground">
-            Map Placeholder
+            Find Us
           </p>
         </div>
         <CardHeader>
@@ -24,9 +29,17 @@ export default function ContactPage() {
         </CardHeader>
         <CardContent className="space-y-2 text-muted">
           <p className="font-medium text-foreground">KiRA Bakery</p>
-          <p>Kito village, Mamerito Mugerwa Road, Kira</p>
+          <p>{address}</p>
           <p>Phone: +256774624180</p>
           <p>Email: kirabakery@gmail.com</p>
+          <Link
+            href={directionsHref}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-block pt-2 text-sm font-medium text-accent underline underline-offset-4"
+          >
+            Open in Google Maps
+          </Link>
         </CardContent>
       </Card>
       <Card>

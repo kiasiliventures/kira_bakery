@@ -5,8 +5,7 @@ export default function MenuPage() {
     <div className="space-y-6">
       <h1 className="text-4xl text-foreground">Menu</h1>
       <p className="max-w-2xl text-muted">
-        Explore our bread, cakes, pastries, and other bakery favorites including
-        yoghurt and miscellaneous items. Prices are listed in UGX.
+        Browse our range of freshly baked breads, cakes, pastries, yoghurt and other delightful treats.
       </p>
       <MenuCatalog />
     </div>

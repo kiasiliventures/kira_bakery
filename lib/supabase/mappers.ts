@@ -146,6 +146,10 @@ export function mapLegacyAdminProductRow(row: LegacyAdminProductRow): Product {
     soldOut: !row.is_available || availableVariants.length === 0,
     featured: row.is_featured,
     options: sizeOptions.length > 0 ? { sizes: sizeOptions } : undefined,
+    variantPrices: availableVariants.map((variant) => ({
+      label: variant.name,
+      priceUGX: Math.round(Number(variant.price)),
+    })),
   };
 }
 

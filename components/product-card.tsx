@@ -6,6 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { useCart } from "@/components/providers/app-provider";
 import { formatUGX } from "@/lib/format";
+import {
+  getProductPriceRange,
+  getSelectedProductPrice,
+} from "@/lib/product-pricing";
 import type { Product } from "@/types/product";
 
 type ProductCardProps = {
@@ -15,6 +19,9 @@ type ProductCardProps = {
 export function ProductCard({ product }: ProductCardProps) {
   const { addItem } = useCart();
   const [imageSrc, setImageSrc] = useState(product.image);
+  const defaultVariantSize = product.variantPrices?.[0]?.label;
+  const displayPriceRange = getProductPriceRange(product);
+  const defaultPriceUGX = getSelectedProductPrice(product, defaultVariantSize);
   const lowStockCount =
     product.stockQuantity && product.stockQuantity > 0 && product.stockQuantity < 10
       ? product.stockQuantity
@@ -57,7 +64,11 @@ export function ProductCard({ product }: ProductCardProps) {
         <p className="text-sm text-muted">{product.description}</p>
       </CardHeader>
       <CardContent className="pt-0">
-        <p className="font-semibold text-foreground">{formatUGX(product.priceUGX)}</p>
+        <p className="font-semibold text-foreground">
+          {displayPriceRange && displayPriceRange.min !== displayPriceRange.max
+            ? `${formatUGX(displayPriceRange.min)} - ${formatUGX(displayPriceRange.max)}`
+            : formatUGX(defaultPriceUGX)}
+        </p>
       </CardContent>
       <CardFooter className="pt-0">
         <Button
@@ -68,8 +79,9 @@ export function ProductCard({ product }: ProductCardProps) {
               productId: product.id,
               name: product.name,
               image: imageSrc,
-              priceUGX: product.priceUGX,
+              priceUGX: defaultPriceUGX,
               stockQuantity: product.stockQuantity,
+              selectedSize: defaultVariantSize,
             })
           }
         >

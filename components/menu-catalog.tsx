@@ -1,24 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ProductCard } from "@/components/product-card";
 import { Button } from "@/components/ui/button";
-import { getProductRepository } from "@/lib/repository-provider";
 import { PRODUCT_CATEGORIES, type Product, type ProductCategory } from "@/types/product";
 
-export function MenuCatalog() {
-  const [products, setProducts] = useState<Product[]>([]);
+type MenuCatalogProps = {
+  products: Product[];
+};
+
+export function MenuCatalog({ products }: MenuCatalogProps) {
   const [activeCategory, setActiveCategory] = useState<ProductCategory>("Bread");
-
-  useEffect(() => {
-    const load = async () => {
-      const repository = getProductRepository();
-      const values = await repository.getAll();
-      setProducts(values);
-    };
-
-    void load();
-  }, []);
 
   const filtered = products.filter((product) => product.category === activeCategory);
 
@@ -43,4 +35,3 @@ export function MenuCatalog() {
     </section>
   );
 }
-

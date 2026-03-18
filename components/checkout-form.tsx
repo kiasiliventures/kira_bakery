@@ -164,7 +164,7 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
     <form action={onSubmit} className="space-y-4">
       <div className={compact ? "grid gap-4" : "grid gap-4 md:grid-cols-2"}>
         <div className="space-y-2">
-          <Label htmlFor="customerName">Full Name</Label>
+          <Label htmlFor="customerName">Name</Label>
           <Input
             id="customerName"
             name="customerName"

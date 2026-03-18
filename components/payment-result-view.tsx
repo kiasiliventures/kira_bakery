@@ -30,6 +30,9 @@ type PaymentStatusResponse = {
   message?: string;
 };
 
+const POLL_INTERVAL_MS = 10_000;
+const MAX_POLL_ATTEMPTS = 5;
+
 function getTitle(viewState: PaymentResultOrder["viewState"] | null) {
   if (viewState === "success") return "Payment confirmed";
   if (viewState === "failed") return "Payment failed";
@@ -60,6 +63,8 @@ export function PaymentResultView() {
   const [payload, setPayload] = useState<PaymentStatusResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [requestSequence, setRequestSequence] = useState(0);
+  const [pollAttempts, setPollAttempts] = useState(0);
   const hasClearedCartRef = useRef(false);
 
   const orderId = searchParams.get("orderId");
@@ -121,7 +126,7 @@ export function PaymentResultView() {
     return () => {
       cancelled = true;
     };
-  }, [statusUrl]);
+  }, [requestSequence, statusUrl]);
 
   const order = payload?.order ?? null;
   const title = getTitle(order?.viewState ?? null);
@@ -135,6 +140,25 @@ export function PaymentResultView() {
     clearCart();
     hasClearedCartRef.current = true;
   }, [clearCart, order?.viewState]);
+
+  useEffect(() => {
+    if (
+      !orderId
+      || isLoading
+      || error
+      || order?.viewState !== "pending"
+      || pollAttempts >= MAX_POLL_ATTEMPTS
+    ) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setPollAttempts((current) => current + 1);
+      setRequestSequence((current) => current + 1);
+    }, POLL_INTERVAL_MS);
+
+    return () => window.clearTimeout(timeout);
+  }, [error, isLoading, order?.viewState, orderId, pollAttempts]);
 
   return (
     <main className="mx-auto flex min-h-[70vh] w-full max-w-3xl flex-col justify-center px-6 py-16">
@@ -181,8 +205,15 @@ export function PaymentResultView() {
         )}
 
         <div className="mt-8 flex flex-wrap gap-3">
-          <Button type="button" onClick={() => window.location.reload()} disabled={!orderId || isLoading}>
-            Refresh Status
+          <Button
+            type="button"
+            onClick={() => {
+              setPollAttempts(0);
+              setRequestSequence((current) => current + 1);
+            }}
+            disabled={!orderId || isLoading}
+          >
+            Check Status
           </Button>
           <Button type="button" variant="outline" onClick={() => window.location.assign("/cart")}>
             Back to Cart

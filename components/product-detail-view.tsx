@@ -2,42 +2,29 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useCart } from "@/components/providers/app-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
 import { formatUGX } from "@/lib/format";
-import { getProductRepository } from "@/lib/repository-provider";
+import {
+  getDefaultProductSize,
+  getSelectedProductPrice,
+} from "@/lib/product-pricing";
 import type { Product } from "@/types/product";
 
-export function ProductDetailView({ id }: { id: string }) {
+type ProductDetailViewProps = {
+  product: Product;
+};
+
+export function ProductDetailView({ product }: ProductDetailViewProps) {
   const { addItem } = useCart();
-  const [product, setProduct] = useState<Product | null>(null);
-  const [imageSrc, setImageSrc] = useState("");
+  const [imageSrc, setImageSrc] = useState(product.image);
   const [quantity, setQuantity] = useState(1);
-  const [size, setSize] = useState("");
-  const [flavor, setFlavor] = useState("");
-
-  useEffect(() => {
-    const load = async () => {
-      const repository = getProductRepository();
-      const value = await repository.getById(id);
-      setProduct(value);
-      setImageSrc(value?.image ?? "");
-      if (value?.options?.sizes?.[0]) {
-        setSize(value.options.sizes[0]);
-      }
-      if (value?.options?.flavors?.[0]) {
-        setFlavor(value.options.flavors[0]);
-      }
-    };
-    void load();
-  }, [id]);
-
-  if (!product) {
-    return <p className="text-muted">Loading product...</p>;
-  }
+  const [size, setSize] = useState(getDefaultProductSize(product) ?? "");
+  const [flavor, setFlavor] = useState(product.options?.flavors?.[0] ?? "");
+  const selectedPriceUGX = getSelectedProductPrice(product, size);
 
   const lowStockCount =
     product.stockQuantity && product.stockQuantity > 0 && product.stockQuantity < 10
@@ -72,7 +59,12 @@ export function ProductDetailView({ id }: { id: string }) {
           <p className="text-sm uppercase tracking-wide text-badge-foreground">{product.category}</p>
           <h1 className="font-serif text-4xl text-foreground">{product.name}</h1>
           <p className="text-muted">{product.description}</p>
-          <p className="text-2xl font-semibold text-foreground">{formatUGX(product.priceUGX)}</p>
+          <div className="space-y-1">
+            <p className="text-2xl font-semibold text-foreground">{formatUGX(selectedPriceUGX)}</p>
+            {product.variantPrices && product.variantPrices.length > 1 ? (
+              <p className="text-sm text-muted">Price updates to match your selected size.</p>
+            ) : null}
+          </div>
           {lowStockCount ? (
             <p className="text-sm font-medium text-badge-foreground">
               {lowStockCount} pieces left
@@ -123,7 +115,7 @@ export function ProductDetailView({ id }: { id: string }) {
                 productId: product.id,
                 name: product.name,
                 image: imageSrc,
-                priceUGX: product.priceUGX,
+                priceUGX: selectedPriceUGX,
                 stockQuantity: product.stockQuantity,
                 selectedSize: size || undefined,
                 selectedFlavor: flavor || undefined,

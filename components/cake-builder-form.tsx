@@ -46,6 +46,24 @@ const emptyState: BuilderState = {
   notes: "",
 };
 
+function getAvailableIdsForField(
+  prices: CakePrice[],
+  selection: BuilderState,
+  field: FieldName,
+) {
+  const scopedSelection: Partial<CakeSelection> = {};
+
+  for (const candidateField of cakeSelectionFields) {
+    if (candidateField === field) {
+      break;
+    }
+
+    scopedSelection[candidateField] = selection[candidateField];
+  }
+
+  return getDistinctIds(prices, scopedSelection, field);
+}
+
 export function CakeBuilderForm() {
   const [config, setConfig] = useState<CakeConfig | null>(null);
   const [prices, setPrices] = useState<CakePrice[]>([]);
@@ -113,20 +131,6 @@ export function CakeBuilderForm() {
     };
   }, []);
 
-  const getAvailableIdsForField = (selection: BuilderState, field: FieldName) => {
-    const scopedSelection: Partial<CakeSelection> = {};
-
-    for (const candidateField of cakeSelectionFields) {
-      if (candidateField === field) {
-        break;
-      }
-
-      scopedSelection[candidateField] = selection[candidateField];
-    }
-
-    return getDistinctIds(prices, scopedSelection, field);
-  };
-
   const selectionKey = [
     form.shapeId,
     form.sizeId,
@@ -145,7 +149,7 @@ export function CakeBuilderForm() {
       let changed = false;
 
       for (const field of cakeSelectionFields) {
-        const available = getAvailableIdsForField(next, field);
+        const available = getAvailableIdsForField(prices, next, field);
         if (available.length === 0) {
           continue;
         }
@@ -180,11 +184,11 @@ export function CakeBuilderForm() {
 
   const availableIds = useMemo(
     () => ({
-      shapeId: getAvailableIdsForField(form, "shapeId"),
-      sizeId: getAvailableIdsForField(form, "sizeId"),
-      tierOptionId: getAvailableIdsForField(form, "tierOptionId"),
-      toppingId: getAvailableIdsForField(form, "toppingId"),
-      flavourId: getAvailableIdsForField(form, "flavourId"),
+      shapeId: getAvailableIdsForField(prices, form, "shapeId"),
+      sizeId: getAvailableIdsForField(prices, form, "sizeId"),
+      tierOptionId: getAvailableIdsForField(prices, form, "tierOptionId"),
+      toppingId: getAvailableIdsForField(prices, form, "toppingId"),
+      flavourId: getAvailableIdsForField(prices, form, "flavourId"),
     }),
     [form, prices],
   );

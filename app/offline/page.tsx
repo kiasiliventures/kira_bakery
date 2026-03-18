@@ -6,11 +6,17 @@ export default function OfflinePage() {
     <div className="mx-auto flex max-w-xl flex-col items-center gap-5 rounded-2xl bg-surface p-10 text-center shadow-[var(--shadow-card)]">
       <h1 className="text-4xl text-foreground">You are offline</h1>
       <p className="text-muted">
-        Core pages remain available. Reconnect to place orders or fetch new content.
+        Recently visited pages and cached product images can still open. Reconnect to place orders,
+        confirm payments, or fetch the latest catalog updates.
       </p>
-      <Link href="/">
-        <Button>Back to Home</Button>
-      </Link>
+      <div className="flex flex-wrap justify-center gap-3">
+        <Link href="/">
+          <Button>Back to Home</Button>
+        </Link>
+        <Link href="/menu">
+          <Button variant="outline">Open Menu</Button>
+        </Link>
+      </div>
     </div>
   );
 }

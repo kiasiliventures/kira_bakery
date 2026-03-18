@@ -1,5 +1,6 @@
 import "server-only";
 
+import { unstable_cache } from "next/cache";
 import { getPaymentProvider, parsePaymentProviderName, type PaymentProviderName } from "@/lib/payments/config";
 import {
   getPaymentGateway,
@@ -85,6 +86,8 @@ type SyncPaymentInput = {
   merchantReference?: string | null;
   source: PaymentSyncSource;
 };
+
+const PAYMENT_STATUS_REFRESH_REVALIDATE_SECONDS = 15;
 
 function normalizeStoredPaymentStatus(paymentStatus: string | null | undefined): PaymentStatus {
   const normalized = paymentStatus?.trim().toLowerCase();
@@ -512,14 +515,21 @@ export async function getOrderPaymentSnapshot(
   }
 
   const paymentStatus = normalizeStoredPaymentStatus(row.payment_status);
-  const shouldRefresh = Boolean(options?.refresh && row.order_tracking_id && paymentStatus !== "paid");
+  const shouldRefresh = Boolean(
+    options?.refresh && row.order_tracking_id && paymentStatus === "pending",
+  );
 
   if (shouldRefresh) {
-    return syncOrderPaymentForOrder({
-      orderId,
-      orderTrackingId: row.order_tracking_id,
-      source: "status",
-    });
+    return unstable_cache(
+      async () =>
+        syncOrderPaymentForOrder({
+          orderId,
+          orderTrackingId: row.order_tracking_id,
+          source: "status",
+        }),
+      ["order-payment-status-refresh", orderId],
+      { revalidate: PAYMENT_STATUS_REFRESH_REVALIDATE_SECONDS },
+    )();
   }
 
   return buildSnapshot(row, {

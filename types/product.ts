@@ -12,6 +12,11 @@ export type ProductOptionSet = {
   flavors?: string[];
 };
 
+export type ProductVariantPrice = {
+  label: string;
+  priceUGX: number;
+};
+
 export type Product = {
   id: string;
   name: string;
@@ -23,4 +28,5 @@ export type Product = {
   stockQuantity?: number;
   featured?: boolean;
   options?: ProductOptionSet;
+  variantPrices?: ProductVariantPrice[];
 };

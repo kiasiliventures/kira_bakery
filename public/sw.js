@@ -1,9 +1,52 @@
-const CACHE_NAME = "kira-static-v1";
-const STATIC_PATHS = ["/", "/offline", "/manifest.webmanifest", "/icons/icon-192.svg", "/icons/icon-512.svg"];
+const SHELL_CACHE_NAME = "kira-shell-v2";
+const RUNTIME_CACHE_NAME = "kira-runtime-v2";
+const IMAGE_CACHE_NAME = "kira-images-v2";
+const CACHE_NAMES = [SHELL_CACHE_NAME, RUNTIME_CACHE_NAME, IMAGE_CACHE_NAME];
+const STATIC_PATHS = [
+  "/",
+  "/menu",
+  "/classes",
+  "/contact",
+  "/offline",
+  "/manifest.webmanifest",
+  "/icons/icon-192.svg",
+  "/icons/icon-512.svg",
+  "/images/hero_image.png",
+];
+
+async function cacheSuccessfulResponse(cacheName, request, response) {
+  if (!response || (!response.ok && response.type !== "opaque")) {
+    return response;
+  }
+
+  const cache = await caches.open(cacheName);
+  await cache.put(request, response.clone());
+  return response;
+}
+
+async function staleWhileRevalidate(cacheName, request) {
+  const cache = await caches.open(cacheName);
+  const cached = await cache.match(request);
+  const networkResponsePromise = fetch(request)
+    .then((response) => cacheSuccessfulResponse(cacheName, request, response))
+    .catch(() => null);
+
+  if (cached) {
+    void networkResponsePromise;
+    return cached;
+  }
+
+  const networkResponse = await networkResponsePromise;
+  if (networkResponse) {
+    return networkResponse;
+  }
+
+  throw new Error("Unable to fulfill request from cache or network.");
+}
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_PATHS)),
+    caches.open(SHELL_CACHE_NAME).then((cache) => cache.addAll(STATIC_PATHS)),
   );
   self.skipWaiting();
 });
@@ -13,7 +56,7 @@ self.addEventListener("activate", (event) => {
     caches.keys().then((keys) =>
       Promise.all(
         keys
-          .filter((key) => key !== CACHE_NAME)
+          .filter((key) => !CACHE_NAMES.includes(key))
           .map((key) => caches.delete(key)),
       ),
     ),
@@ -31,34 +74,28 @@ self.addEventListener("fetch", (event) => {
 
   if (request.mode === "navigate") {
     event.respondWith(
-      fetch(request).catch(async () => {
-        const cached = await caches.match(request);
-        return cached || caches.match("/offline");
-      }),
+      fetch(request)
+        .then((response) => cacheSuccessfulResponse(SHELL_CACHE_NAME, request, response))
+        .catch(async () => {
+          const shellCache = await caches.open(SHELL_CACHE_NAME);
+          const cached = await shellCache.match(request);
+          return cached || shellCache.match("/offline");
+        }),
     );
     return;
   }
 
-  if (url.origin === self.location.origin) {
+  if (request.destination === "image") {
     event.respondWith(
-      caches.match(request).then((cached) => {
-        if (cached) {
-          return cached;
-        }
-
-        return fetch(request).then((response) => {
-          const destination = request.destination;
-          if (
-            ["style", "script", "font", "image"].includes(destination) ||
-            url.pathname.startsWith("/_next/static")
-          ) {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
-          }
-          return response;
-        });
-      }),
+      staleWhileRevalidate(IMAGE_CACHE_NAME, request),
     );
+    return;
+  }
+
+  if (
+    ["style", "script", "font"].includes(request.destination)
+    || url.pathname.startsWith("/_next/static")
+  ) {
+    event.respondWith(staleWhileRevalidate(RUNTIME_CACHE_NAME, request));
   }
 });
-

@@ -1,96 +1,11 @@
 import Image from "next/image";
 import Link from "next/link";
 import { CategoryTile } from "@/components/category-tile";
-import {
-  mapLegacyAdminProductRow,
-  mapLegacyProductRow,
-  mapSharedProductRow,
-} from "@/lib/supabase/mappers";
-import { getSupabasePublicServerClient } from "@/lib/supabase/server";
-import { PRODUCT_CATEGORIES, type ProductCategory } from "@/types/product";
-
-type SharedHomeProductRow = {
-  id: string;
-  name: string;
-  description: string;
-  image_url: string | null;
-  base_price: string | number;
-  stock_quantity: number;
-  is_available: boolean;
-  is_featured: boolean;
-  categories?: { name: string } | { name: string }[] | null;
-};
-
-async function getCategoryImages() {
-  const supabase = getSupabasePublicServerClient();
-  const images: Partial<Record<ProductCategory, string>> = {};
-
-  const shared = await supabase
-    .from("products")
-    .select("id,name,description,image_url,base_price,stock_quantity,is_available,is_featured,categories(name)")
-    .order("created_at", { ascending: false });
-
-  if (shared.error?.code === "42703") {
-    const legacy = await supabase
-      .from("products")
-      .select("id,name,description,category,image,sold_out,price_ugx,featured,options")
-      .order("created_at", { ascending: false });
-
-    if (legacy.error?.code === "42703") {
-      const legacyAdmin = await supabase
-        .from("products")
-        .select(
-          "id,name,description,image_url,is_available,is_featured,categories(name),product_variants(name,price,is_available,sort_order)",
-        )
-        .order("created_at", { ascending: false });
-
-      if (legacyAdmin.error) {
-        console.error("home_legacy_admin_category_images_failed", legacyAdmin.error.message);
-        return images;
-      }
-
-      for (const row of legacyAdmin.data ?? []) {
-        const product = mapLegacyAdminProductRow(row);
-        if (!product.soldOut && product.image && !images[product.category]) {
-          images[product.category] = product.image;
-        }
-      }
-
-      return images;
-    }
-
-    if (legacy.error) {
-      console.error("home_legacy_category_images_failed", legacy.error.message);
-      return images;
-    }
-
-    for (const row of legacy.data ?? []) {
-      const product = mapLegacyProductRow(row);
-      if (!product.soldOut && product.image && !images[product.category]) {
-        images[product.category] = product.image;
-      }
-    }
-
-    return images;
-  }
-
-  if (shared.error) {
-    console.error("home_category_images_failed", shared.error.message);
-    return images;
-  }
-
-  for (const row of (shared.data ?? []) as SharedHomeProductRow[]) {
-    const product = mapSharedProductRow(row);
-    if (!product.soldOut && product.image && !images[product.category]) {
-      images[product.category] = product.image;
-    }
-  }
-
-  return images;
-}
+import { getCachedCategoryImages } from "@/lib/catalog/products";
+import { PRODUCT_CATEGORIES } from "@/types/product";
 
 export default async function HomePage() {
-  const categoryImages = await getCategoryImages();
+  const categoryImages = await getCachedCategoryImages();
 
   return (
     <div className="space-y-12">

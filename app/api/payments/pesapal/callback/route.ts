@@ -1,10 +1,23 @@
 import { NextResponse } from "next/server";
 import { setOrderAccessCookie } from "@/lib/payments/order-access-cookie";
+import { enforceRateLimit } from "@/lib/rate-limit";
 import {
   syncPesapalPaymentForOrder,
 } from "@/lib/payments/order-payments";
 
+function tooManyRequests(retryAfterSeconds: number) {
+  return NextResponse.json(
+    { message: "Too many requests. Please wait and try again." },
+    { status: 429, headers: { "Retry-After": String(retryAfterSeconds) } },
+  );
+}
+
 export async function GET(request: Request) {
+  const rateLimit = await enforceRateLimit(request, "payment-callback", 90, 60_000);
+  if (!rateLimit.allowed) {
+    return tooManyRequests(rateLimit.retryAfterSeconds);
+  }
+
   const requestUrl = new URL(request.url);
   const orderId =
     requestUrl.searchParams.get("orderId")?.trim()
@@ -34,6 +47,11 @@ export async function GET(request: Request) {
         error: error instanceof Error ? error.message : "unknown error",
       });
     }
+  } else if (!cancelled) {
+    console.warn("pesapal_callback_missing_identifiers", {
+      orderId: orderId ?? null,
+      orderTrackingId: orderTrackingId ?? null,
+    });
   }
 
   const resultUrl = new URL("/payment/result", request.url);

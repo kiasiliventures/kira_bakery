@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { syncPesapalPaymentForOrder } from "@/lib/payments/order-payments";
+import { enforceRateLimit } from "@/lib/rate-limit";
 
 type PesapalNotificationPayload = {
   OrderNotificationType?: string | null;
@@ -19,6 +20,13 @@ function buildAck(payload: PesapalNotificationPayload) {
     params.set("OrderMerchantReference", payload.OrderMerchantReference);
   }
   return params.toString();
+}
+
+function tooManyRequests(retryAfterSeconds: number) {
+  return NextResponse.json(
+    { message: "Too many requests. Please wait and try again." },
+    { status: 429, headers: { "Retry-After": String(retryAfterSeconds) } },
+  );
 }
 
 async function parseNotificationPayload(request: Request): Promise<PesapalNotificationPayload> {
@@ -55,6 +63,11 @@ async function parseNotificationPayload(request: Request): Promise<PesapalNotifi
 }
 
 async function handleNotification(request: Request) {
+  const rateLimit = await enforceRateLimit(request, "payment-ipn", 180, 60_000);
+  if (!rateLimit.allowed) {
+    return tooManyRequests(rateLimit.retryAfterSeconds);
+  }
+
   const payload = await parseNotificationPayload(request);
   const orderId = payload.OrderMerchantReference?.trim();
   const orderTrackingId = payload.OrderTrackingId?.trim();

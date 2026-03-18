@@ -129,6 +129,21 @@ function mapViewState(
   return "pending";
 }
 
+function canReuseSettledPaymentState(
+  row: OrderPaymentRow,
+  providerReference: string,
+  source: PaymentSyncSource,
+) {
+  if (source === "admin_reverify") {
+    return false;
+  }
+
+  return (
+    normalizeStoredPaymentStatus(row.payment_status) === "paid"
+    && row.order_tracking_id === providerReference
+  );
+}
+
 async function getOrderPaymentRow(orderId: string): Promise<OrderPaymentRow | null> {
   const supabase = getSupabaseServerClient();
   const { data, error } = await supabase
@@ -451,6 +466,19 @@ export async function syncOrderPaymentForOrder(
       source: input.source,
     });
     throw new Error("Tracking ID does not match the stored order.");
+  }
+
+  if (canReuseSettledPaymentState(row, providerReference, input.source)) {
+    console.info("order_payment_sync_short_circuit", {
+      orderId: input.orderId,
+      provider: providerName,
+      orderTrackingId: providerReference,
+      source: input.source,
+      paymentStatus: row.payment_status,
+    });
+    return buildSnapshot(row, {
+      verified: true,
+    });
   }
 
   console.info("order_payment_sync_start", {

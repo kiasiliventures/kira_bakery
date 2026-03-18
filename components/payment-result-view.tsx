@@ -64,25 +64,23 @@ export function PaymentResultView() {
   const hasClearedCartRef = useRef(false);
 
   const orderId = searchParams.get("orderId");
-  const accessToken = searchParams.get("accessToken");
   const hint = searchParams.get("hint") === "cancelled" || searchParams.get("cancelled") === "1"
     ? "cancelled"
     : null;
 
   const statusUrl = useMemo(() => {
-    if (!orderId || !accessToken) {
+    if (!orderId) {
       return null;
     }
     const params = new URLSearchParams({
       orderId,
-      accessToken,
       refresh: "1",
     });
     if (hint) {
       params.set("hint", hint);
     }
     return `/api/payments/pesapal/status?${params.toString()}`;
-  }, [accessToken, hint, orderId]);
+  }, [hint, orderId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -142,7 +140,6 @@ export function PaymentResultView() {
   useEffect(() => {
     if (
       !orderId
-      || !accessToken
       || isLoading
       || error
       || order?.viewState !== "pending"
@@ -157,7 +154,7 @@ export function PaymentResultView() {
     }, POLL_INTERVAL_MS);
 
     return () => window.clearTimeout(timeout);
-  }, [accessToken, error, isLoading, order?.viewState, orderId, pollAttempts]);
+  }, [error, isLoading, order?.viewState, orderId, pollAttempts]);
 
   return (
     <main className="mx-auto flex min-h-[70vh] w-full max-w-3xl flex-col justify-center px-6 py-16">
@@ -207,7 +204,7 @@ export function PaymentResultView() {
               setPollAttempts(0);
               setRequestSequence((current) => current + 1);
             }}
-            disabled={!orderId || !accessToken || isLoading}
+            disabled={!orderId || isLoading}
           >
             Check Status
           </Button>

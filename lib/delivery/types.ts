@@ -43,6 +43,7 @@ export type DeliveryQuote = {
   currency: "UGX";
   distanceKm: number;
   deliveryFee: number;
+  quoteToken: string;
   pricingConfigId: string;
   storeLocationId: string;
   store: DeliveryStoreLocation;

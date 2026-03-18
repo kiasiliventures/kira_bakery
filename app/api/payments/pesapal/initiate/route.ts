@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getOrderAccessCookie } from "@/lib/payments/order-access-cookie";
 import {
   initiateOrderPaymentForOrder,
   isOrderAccessDeniedError,
@@ -19,16 +20,16 @@ export async function POST(request: Request) {
   }
 
   const body = (await request.json().catch(() => null)) as
-    | { orderId?: string; accessToken?: string }
+    | { orderId?: string }
     | null;
   const orderId = body?.orderId?.trim();
-  const accessToken = body?.accessToken?.trim();
 
   if (!orderId) {
     return NextResponse.json({ message: "Missing orderId." }, { status: 400 });
   }
+  const accessToken = await getOrderAccessCookie(orderId);
   if (!accessToken) {
-    return NextResponse.json({ message: "Missing accessToken." }, { status: 400 });
+    return NextResponse.json({ message: "Missing order access session." }, { status: 403 });
   }
 
   try {

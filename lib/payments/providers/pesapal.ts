@@ -53,7 +53,6 @@ type PesapalRegisterIpnResponse = {
 
 export type PesapalSubmitOrderInput = {
   orderId: string;
-  accessToken?: string | null;
   amountUGX: number;
   description: string;
   customerName: string;
@@ -147,7 +146,6 @@ function getConfiguredOrRuntimeUrl(
 
 function getCallbackUrl(
   orderId: string,
-  accessToken?: string | null,
   requestOrigin?: string | null,
 ) {
   const url = new URL(
@@ -158,15 +156,11 @@ function getCallbackUrl(
     ),
   );
   url.searchParams.set("orderId", orderId);
-  if (accessToken) {
-    url.searchParams.set("accessToken", accessToken);
-  }
   return url.toString();
 }
 
 function getCancellationUrl(
   orderId: string,
-  accessToken?: string | null,
   requestOrigin?: string | null,
 ) {
   const url = new URL(
@@ -177,9 +171,6 @@ function getCancellationUrl(
     ),
   );
   url.searchParams.set("orderId", orderId);
-  if (accessToken) {
-    url.searchParams.set("accessToken", accessToken);
-  }
   url.searchParams.set("cancelled", "1");
   return url.toString();
 }
@@ -221,6 +212,7 @@ async function pesapalRequest<T>(
   init: RequestInit,
   options?: { authenticated?: boolean },
 ): Promise<T> {
+  const requestStartedAt = performance.now();
   const headers = new Headers(init.headers);
   headers.set("Accept", "application/json");
 
@@ -237,6 +229,15 @@ async function pesapalRequest<T>(
     ...init,
     headers,
     cache: "no-store",
+  });
+  const durationMs = Math.round((performance.now() - requestStartedAt) * 100) / 100;
+
+  console.info("pesapal_request_timing", {
+    path,
+    method: init.method ?? "GET",
+    status: response.status,
+    durationMs,
+    authenticated: Boolean(options?.authenticated),
   });
 
   if (!response.ok) {
@@ -356,8 +357,8 @@ export async function submitPesapalOrderRequest(
     currency: "UGX",
     amount: input.amountUGX,
     description: input.description,
-    callback_url: getCallbackUrl(input.orderId, input.accessToken, input.requestOrigin),
-    cancellation_url: getCancellationUrl(input.orderId, input.accessToken, input.requestOrigin),
+    callback_url: getCallbackUrl(input.orderId, input.requestOrigin),
+    cancellation_url: getCancellationUrl(input.orderId, input.requestOrigin),
     notification_id: notificationId,
     billing_address: {
       email_address: input.email ?? "",
@@ -413,6 +414,7 @@ export async function getPesapalTransactionStatus(orderTrackingId: string) {
   baseUrl.searchParams.set("orderTrackingId", orderTrackingId);
 
   const token = await getPesapalAuthToken();
+  const requestStartedAt = performance.now();
   const response = await fetch(baseUrl.toString(), {
     method: "GET",
     headers: {
@@ -420,6 +422,12 @@ export async function getPesapalTransactionStatus(orderTrackingId: string) {
       Authorization: `Bearer ${token}`,
     },
     cache: "no-store",
+  });
+  const durationMs = Math.round((performance.now() - requestStartedAt) * 100) / 100;
+  console.info("pesapal_status_request_timing", {
+    orderTrackingId,
+    status: response.status,
+    durationMs,
   });
 
   if (!response.ok) {
@@ -457,7 +465,6 @@ export function createPesapalGateway(): PaymentGateway {
     async initiatePayment(input: PaymentInitiationInput): Promise<PaymentInitiationResult> {
       const response = await submitPesapalOrderRequest({
         orderId: input.orderId,
-        accessToken: input.accessToken,
         amountUGX: input.amount,
         description: input.description,
         customerName: input.customerName,

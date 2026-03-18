@@ -1,5 +1,7 @@
 import "server-only";
 
+import { unstable_cache } from "next/cache";
+import { createDeliveryQuoteToken } from "@/lib/delivery/quote-token";
 import { DeliveryError } from "@/lib/delivery/errors";
 import { getGoogleMapsDeliveryProvider } from "@/lib/delivery/providers/google-maps";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
@@ -164,6 +166,12 @@ async function loadActiveDeliveryPricingConfig(): Promise<DeliveryPricingConfig>
   };
 }
 
+const getCachedActiveDeliveryPricingConfig = unstable_cache(
+  loadActiveDeliveryPricingConfig,
+  ["active-delivery-pricing-config"],
+  { revalidate: 300 },
+);
+
 function findMatchingBracket(
   brackets: DeliveryPricingBracket[],
   distanceKm: number,
@@ -183,7 +191,7 @@ export async function autocompleteDeliveryPlaces(
 
 export async function quoteDelivery(input: DeliveryLocationInput): Promise<DeliveryQuote> {
   const provider = getGoogleMapsDeliveryProvider();
-  const pricingConfig = await loadActiveDeliveryPricingConfig();
+  const pricingConfig = await getCachedActiveDeliveryPricingConfig();
   const destination = await provider.resolvePlace(input);
   const routeDistanceKm = await provider.computeRouteDistanceKm(
     {
@@ -217,13 +225,18 @@ export async function quoteDelivery(input: DeliveryLocationInput): Promise<Deliv
     );
   }
 
-  return {
-    currency: "UGX",
+  const quote = {
+    currency: "UGX" as const,
     distanceKm,
     deliveryFee: matchingBracket.fee,
     pricingConfigId: pricingConfig.id,
     storeLocationId: pricingConfig.storeLocation.id,
     store: pricingConfig.storeLocation,
     destination,
+  };
+
+  return {
+    ...quote,
+    quoteToken: createDeliveryQuoteToken(quote),
   };
 }

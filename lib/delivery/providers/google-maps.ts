@@ -63,14 +63,33 @@ function getGoogleMapsLanguageCode() {
   return process.env.GOOGLE_MAPS_LANGUAGE_CODE?.trim() || "en";
 }
 
+function getGoogleMapsTimeoutMs() {
+  return Number(process.env.GOOGLE_MAPS_TIMEOUT_MS ?? 10_000);
+}
+
+function mergeSignals(...signals: Array<AbortSignal | null | undefined>) {
+  const activeSignals = signals.filter((signal): signal is AbortSignal => Boolean(signal));
+  if (activeSignals.length === 0) {
+    return undefined;
+  }
+
+  if (activeSignals.length === 1) {
+    return activeSignals[0];
+  }
+
+  return AbortSignal.any(activeSignals);
+}
+
 async function googleMapsRequest<T>(
   url: string,
   init: RequestInit,
   fieldMask: string,
 ): Promise<T> {
+  const timeoutSignal = AbortSignal.timeout(getGoogleMapsTimeoutMs());
   const response = await fetch(url, {
     ...init,
     cache: "no-store",
+    signal: mergeSignals(init.signal, timeoutSignal),
     headers: {
       "Content-Type": "application/json",
       "X-Goog-Api-Key": requireGoogleMapsApiKey(),

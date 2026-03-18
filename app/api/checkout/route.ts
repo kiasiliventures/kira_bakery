@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { isDeliveryError } from "@/lib/delivery/errors";
-import { quoteDelivery } from "@/lib/delivery/service";
+import { setOrderAccessCookie } from "@/lib/payments/order-access-cookie";
+import { verifyDeliveryQuoteToken } from "@/lib/delivery/quote-token";
 import {
   getOrderAccessToken,
   getOrderPaymentSnapshot,
@@ -57,7 +57,6 @@ type CanonicalCheckoutItem = {
 type StoredCheckoutResponse = {
   ok?: boolean;
   id?: string;
-  accessToken?: string;
   message?: string;
   redirectUrl?: string;
   paymentStatus?: string;
@@ -70,6 +69,11 @@ type CheckoutIdempotencyRow = {
   resource_id: string | null;
   response_status: number | null;
   response_body: StoredCheckoutResponse | null;
+};
+
+type TimingEntry = {
+  name: string;
+  durationMs: number;
 };
 
 const checkoutPayloadSchema = z.object({
@@ -90,6 +94,34 @@ function badRequest(message: string) {
 
 function conflict(message: string) {
   return NextResponse.json({ message }, { status: 409 });
+}
+
+function startTiming() {
+  return performance.now();
+}
+
+function recordTiming(
+  timings: TimingEntry[],
+  name: string,
+  startedAt: number,
+) {
+  timings.push({
+    name,
+    durationMs: Math.round((performance.now() - startedAt) * 100) / 100,
+  });
+}
+
+function setServerTimingHeaders(response: NextResponse, timings: TimingEntry[]) {
+  if (timings.length === 0) {
+    return;
+  }
+
+  response.headers.set(
+    "Server-Timing",
+    timings
+      .map((entry) => `${entry.name};dur=${entry.durationMs}`)
+      .join(", "),
+  );
 }
 
 function tooManyRequests(retryAfterSeconds: number) {
@@ -351,8 +383,22 @@ async function resumeCheckoutAttempt(
   row: CheckoutIdempotencyRow,
   requestOrigin: string,
 ) {
+  const timings: TimingEntry[] = [];
+  const resumeStartedAt = startTiming();
+
   if (row.response_status !== null && row.response_body) {
-    return NextResponse.json(row.response_body, { status: row.response_status });
+    const response = NextResponse.json(row.response_body, { status: row.response_status });
+    if (row.resource_id) {
+      const accessTokenLookupStartedAt = startTiming();
+      const accessToken = await getOrderAccessToken(row.resource_id);
+      recordTiming(timings, "checkout_resume_token_lookup", accessTokenLookupStartedAt);
+      if (accessToken) {
+        setOrderAccessCookie(response, row.resource_id, accessToken);
+      }
+    }
+    recordTiming(timings, "checkout_resume_total", resumeStartedAt);
+    setServerTimingHeaders(response, timings);
+    return response;
   }
 
   if (!row.resource_id) {
@@ -368,31 +414,61 @@ async function resumeCheckoutAttempt(
   });
 
   try {
+    const accessTokenLookupStartedAt = startTiming();
     const accessToken = await getOrderAccessToken(row.resource_id);
+    recordTiming(timings, "checkout_resume_token_lookup", accessTokenLookupStartedAt);
+    const paymentInitiationStartedAt = startTiming();
     const payment = await initiateOrderPaymentForOrder(row.resource_id, {
       requestOrigin,
     });
+    recordTiming(timings, "checkout_resume_payment_init", paymentInitiationStartedAt);
     const responseBody = {
       ok: true,
       id: row.resource_id,
-      accessToken: accessToken ?? undefined,
       redirectUrl: payment.redirectUrl,
       paymentStatus: payment.paymentStatus,
     };
+    const finalizeStartedAt = startTiming();
     await finalizeCheckoutAttempt(row.key, 200, responseBody);
-    return NextResponse.json(responseBody, { status: 200 });
+    recordTiming(timings, "checkout_resume_finalize", finalizeStartedAt);
+    const response = NextResponse.json(responseBody, { status: 200 });
+    if (accessToken) {
+      setOrderAccessCookie(response, row.resource_id, accessToken);
+    }
+    recordTiming(timings, "checkout_resume_total", resumeStartedAt);
+    setServerTimingHeaders(response, timings);
+    console.info("checkout_resume_timing", {
+      orderId: row.resource_id,
+      timings,
+    });
+    return response;
   } catch (error) {
     if (error instanceof Error && error.message === "Order has already been paid.") {
+      const accessTokenLookupStartedAt = startTiming();
       const accessToken = await getOrderAccessToken(row.resource_id);
+      recordTiming(timings, "checkout_resume_token_lookup", accessTokenLookupStartedAt);
+      const snapshotStartedAt = startTiming();
       const snapshot = await getOrderPaymentSnapshot(row.resource_id, { refresh: false });
+      recordTiming(timings, "checkout_resume_snapshot", snapshotStartedAt);
       const responseBody = {
         ok: true,
         id: row.resource_id,
-        accessToken: accessToken ?? undefined,
         paymentStatus: snapshot.paymentStatus,
       };
+      const finalizeStartedAt = startTiming();
       await finalizeCheckoutAttempt(row.key, 200, responseBody);
-      return NextResponse.json(responseBody, { status: 200 });
+      recordTiming(timings, "checkout_resume_finalize", finalizeStartedAt);
+      const response = NextResponse.json(responseBody, { status: 200 });
+      if (accessToken) {
+        setOrderAccessCookie(response, row.resource_id, accessToken);
+      }
+      recordTiming(timings, "checkout_resume_total", resumeStartedAt);
+      setServerTimingHeaders(response, timings);
+      console.info("checkout_resume_timing", {
+        orderId: row.resource_id,
+        timings,
+      });
+      return response;
     }
 
     console.error("checkout_payment_resume_failed", {
@@ -404,10 +480,17 @@ async function resumeCheckoutAttempt(
 }
 
 export async function POST(request: Request) {
+  const timings: TimingEntry[] = [];
+  const checkoutStartedAt = startTiming();
   const requestOrigin = new URL(request.url).origin;
+  const rateLimitStartedAt = startTiming();
   const rateLimit = await enforceRateLimit(request, "checkout", 12, 60_000);
+  recordTiming(timings, "checkout_rate_limit", rateLimitStartedAt);
   if (!rateLimit.allowed) {
-    return tooManyRequests(rateLimit.retryAfterSeconds);
+    const response = tooManyRequests(rateLimit.retryAfterSeconds);
+    recordTiming(timings, "checkout_total", checkoutStartedAt);
+    setServerTimingHeaders(response, timings);
+    return response;
   }
 
   const idempotencyKey = getIdempotencyKey(request);
@@ -415,13 +498,18 @@ export async function POST(request: Request) {
     return badRequest("Missing Idempotency-Key header");
   }
 
+  const parseBodyStartedAt = startTiming();
   const body = await request.json();
+  recordTiming(timings, "checkout_parse_body", parseBodyStartedAt);
   const parsed = checkoutPayloadSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json(
+    const response = NextResponse.json(
       { message: "Invalid checkout payload", issues: parsed.error.issues },
       { status: 400 },
     );
+    recordTiming(timings, "checkout_total", checkoutStartedAt);
+    setServerTimingHeaders(response, timings);
+    return response;
   }
 
   if (parsed.data.items.length === 0) {
@@ -429,8 +517,12 @@ export async function POST(request: Request) {
   }
 
   const requestHash = buildCheckoutRequestHash(parsed.data);
+  const idempotencyLookupStartedAt = startTiming();
   const existingAttempt = await getStoredCheckoutAttempt(idempotencyKey);
+  recordTiming(timings, "checkout_idempotency_lookup", idempotencyLookupStartedAt);
   if (existingAttempt.errorResponse) {
+    recordTiming(timings, "checkout_total", checkoutStartedAt);
+    setServerTimingHeaders(existingAttempt.errorResponse, timings);
     return existingAttempt.errorResponse;
   }
 
@@ -445,39 +537,57 @@ export async function POST(request: Request) {
     return resumeCheckoutAttempt(existingAttempt.data, requestOrigin);
   }
 
+  const canonicalItemsStartedAt = startTiming();
   const canonical = await loadCanonicalItems(parsed.data.items);
+  recordTiming(timings, "checkout_load_items", canonicalItemsStartedAt);
   if (canonical.response) {
+    recordTiming(timings, "checkout_total", checkoutStartedAt);
+    setServerTimingHeaders(canonical.response, timings);
     return canonical.response;
   }
 
   const items = canonical.items;
   const subtotalUGX = items.reduce((sum, item) => sum + item.priceUGX * item.quantity, 0);
-  let deliveryQuote = null as Awaited<ReturnType<typeof quoteDelivery>> | null;
+  let deliveryQuote = null as {
+    destination: {
+      addressText: string;
+      placeId: string;
+      latitude: number;
+      longitude: number;
+    };
+    distanceKm: number;
+    deliveryFee: number;
+    pricingConfigId: string;
+    storeLocationId: string;
+  } | null;
 
   if (parsed.data.customer.deliveryMethod === "delivery") {
     try {
-      deliveryQuote = await quoteDelivery({
-        placeId: parsed.data.customer.deliveryLocation?.placeId ?? "",
-        addressText:
-          parsed.data.customer.deliveryLocation?.addressText
-          ?? parsed.data.customer.address
-          ?? "",
-        latitude: parsed.data.customer.deliveryLocation?.latitude,
-        longitude: parsed.data.customer.deliveryLocation?.longitude,
-      });
-    } catch (error) {
-      if (isDeliveryError(error)) {
-        return NextResponse.json(
-          { message: error.publicMessage, code: error.code },
-          { status: error.status },
-        );
+      const quoteVerificationStartedAt = startTiming();
+      const verifiedQuote = verifyDeliveryQuoteToken(parsed.data.customer.deliveryQuoteToken ?? "");
+      recordTiming(timings, "checkout_verify_delivery_quote", quoteVerificationStartedAt);
+      if (verifiedQuote.destination.placeId !== parsed.data.customer.deliveryLocation?.placeId) {
+        const response = badRequest("Delivery location no longer matches the verified quote. Please reselect it.");
+        recordTiming(timings, "checkout_total", checkoutStartedAt);
+        setServerTimingHeaders(response, timings);
+        return response;
       }
-
-      console.error("checkout_delivery_quote_failed", error);
-      return NextResponse.json(
-        { message: "Unable to validate delivery pricing right now." },
-        { status: 500 },
+      deliveryQuote = {
+        destination: verifiedQuote.destination,
+        distanceKm: verifiedQuote.distanceKm,
+        deliveryFee: verifiedQuote.deliveryFee,
+        pricingConfigId: verifiedQuote.pricingConfigId,
+        storeLocationId: verifiedQuote.storeLocationId,
+      };
+    } catch (error) {
+      console.error("checkout_delivery_quote_verification_failed", error);
+      const response = NextResponse.json(
+        { message: "Delivery quote has expired or is invalid. Please refresh it." },
+        { status: 400 },
       );
+      recordTiming(timings, "checkout_total", checkoutStartedAt);
+      setServerTimingHeaders(response, timings);
+      return response;
     }
   }
 
@@ -494,12 +604,14 @@ export async function POST(request: Request) {
     idempotencyKey,
   });
 
+  const reservationStartedAt = startTiming();
   const reservation = await supabase.from("api_idempotency_keys").insert({
     key: idempotencyKey,
     endpoint: "checkout",
     request_hash: requestHash,
     resource_id: orderId,
   });
+  recordTiming(timings, "checkout_idempotency_reserve", reservationStartedAt);
 
   if (reservation.error) {
     if (reservation.error.code === "23505") {
@@ -519,14 +631,20 @@ export async function POST(request: Request) {
         return conflict("Idempotency key cannot be reused with a different checkout payload.");
       }
 
-      return resumeCheckoutAttempt(retryAttempt.data, requestOrigin);
+      const response = await resumeCheckoutAttempt(retryAttempt.data, requestOrigin);
+      setServerTimingHeaders(response, timings);
+      return response;
     }
 
     console.error("checkout_idempotency_reservation_failed", reservation.error.message);
-    return NextResponse.json({ message: "Unable to place order." }, { status: 500 });
+    const response = NextResponse.json({ message: "Unable to place order." }, { status: 500 });
+    recordTiming(timings, "checkout_total", checkoutStartedAt);
+    setServerTimingHeaders(response, timings);
+    return response;
   }
 
   const { customer } = parsed.data;
+  const placeOrderStartedAt = startTiming();
   const { error } = await supabase.rpc("place_guest_order", {
     order_id: orderId,
     order_access_token: orderAccessToken,
@@ -568,39 +686,67 @@ export async function POST(request: Request) {
       selected_flavor: item.selectedFlavor ?? null,
     })),
   });
+  recordTiming(timings, "checkout_place_order", placeOrderStartedAt);
 
   if (error) {
     console.error("checkout_place_guest_order_failed", error.message);
     const recoveredAttempt = await getStoredCheckoutAttempt(idempotencyKey);
     if (recoveredAttempt.data) {
-      return resumeCheckoutAttempt(recoveredAttempt.data, requestOrigin);
+      const response = await resumeCheckoutAttempt(recoveredAttempt.data, requestOrigin);
+      setServerTimingHeaders(response, timings);
+      return response;
     }
 
     await releaseCheckoutAttempt(idempotencyKey);
-    return NextResponse.json({ message: "Unable to place order." }, { status: 500 });
+    const response = NextResponse.json({ message: "Unable to place order." }, { status: 500 });
+    recordTiming(timings, "checkout_total", checkoutStartedAt);
+    setServerTimingHeaders(response, timings);
+    return response;
   }
 
   let payment;
   try {
+    const paymentInitiationStartedAt = startTiming();
     payment = await initiateOrderPaymentForOrder(orderId, {
       requestOrigin,
     });
+    recordTiming(timings, "checkout_payment_init", paymentInitiationStartedAt);
   } catch (paymentError) {
     console.error("checkout_payment_initiation_failed", {
       orderId,
       error: paymentError instanceof Error ? paymentError.message : "unknown error",
     });
-    return NextResponse.json({ message: "Unable to initiate payment." }, { status: 500 });
+    const response = NextResponse.json({ message: "Unable to initiate payment." }, { status: 500 });
+    recordTiming(timings, "checkout_total", checkoutStartedAt);
+    setServerTimingHeaders(response, timings);
+    console.info("checkout_timing", {
+      orderId,
+      idempotencyKey,
+      timings,
+      outcome: "payment_initiation_failed",
+    });
+    return response;
   }
 
   const responseBody = {
     ok: true,
     id: orderId,
-    accessToken: orderAccessToken,
     redirectUrl: payment.redirectUrl,
     paymentStatus: payment.paymentStatus,
   };
+  const finalizeStartedAt = startTiming();
   await finalizeCheckoutAttempt(idempotencyKey, 200, responseBody);
+  recordTiming(timings, "checkout_finalize", finalizeStartedAt);
 
-  return NextResponse.json(responseBody, { status: 200 });
+  const response = NextResponse.json(responseBody, { status: 200 });
+  setOrderAccessCookie(response, orderId, orderAccessToken);
+  recordTiming(timings, "checkout_total", checkoutStartedAt);
+  setServerTimingHeaders(response, timings);
+  console.info("checkout_timing", {
+    orderId,
+    idempotencyKey,
+    timings,
+    outcome: "success",
+  });
+  return response;
 }

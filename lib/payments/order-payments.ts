@@ -353,9 +353,9 @@ export async function initiateOrderPaymentForOrder(
     };
   }
 
+  const providerInitiationStartedAt = performance.now();
   const response = await gateway.initiatePayment({
     orderId: row.id,
-    accessToken: row.order_access_token,
     amount: row.total_ugx,
     currency: "UGX",
     description: buildOrderDescription(row.id),
@@ -364,11 +364,13 @@ export async function initiateOrderPaymentForOrder(
     email: row.customer_email ?? row.email,
     requestOrigin: options?.requestOrigin,
   });
+  const providerInitiationDurationMs = Math.round((performance.now() - providerInitiationStartedAt) * 100) / 100;
 
   console.info("order_payment_initiate_update", {
     orderId,
     provider: providerName,
     providerReference: response.providerReference,
+    durationMs: providerInitiationDurationMs,
   });
 
   await updateOrderPaymentRow(orderId, {
@@ -458,12 +460,14 @@ export async function syncOrderPaymentForOrder(
     source: input.source,
   });
 
+  const providerVerificationStartedAt = performance.now();
   const status = await gateway.verifyPayment({
     orderId: input.orderId,
     providerReference,
     merchantReference: input.merchantReference,
     source: input.source,
   });
+  const providerVerificationDurationMs = Math.round((performance.now() - providerVerificationStartedAt) * 100) / 100;
   const expectedAmount = resolveStoredOrderAmount(row);
   const receivedAmount = typeof status.amount === "number" ? Math.round(status.amount) : null;
 
@@ -542,6 +546,7 @@ export async function syncOrderPaymentForOrder(
     source: input.source,
     paymentStatus: nextPaymentStatus,
     providerStatus: status.providerStatus,
+    durationMs: providerVerificationDurationMs,
   });
 
   return buildSnapshot(nextRow, {

@@ -65,14 +65,10 @@ function buildCheckoutRedirectUrl(transactionToken: string) {
 
 function getResultUrl(
   orderId: string,
-  accessToken?: string | null,
   requestOrigin?: string | null,
 ) {
   const url = new URL(buildRuntimeUrl("/payment/result", requestOrigin));
   url.searchParams.set("orderId", orderId);
-  if (accessToken) {
-    url.searchParams.set("accessToken", accessToken);
-  }
   return url.toString();
 }
 
@@ -107,6 +103,7 @@ function parseDpoXml<T extends Record<string, string | null>>(
 }
 
 async function dpoRequest(xmlBody: string) {
+  const requestStartedAt = performance.now();
   const response = await fetch(getApiUrl(), {
     method: "POST",
     headers: {
@@ -115,6 +112,11 @@ async function dpoRequest(xmlBody: string) {
     },
     body: xmlBody,
     cache: "no-store",
+  });
+  const durationMs = Math.round((performance.now() - requestStartedAt) * 100) / 100;
+  console.info("dpo_request_timing", {
+    status: response.status,
+    durationMs,
   });
 
   const rawText = await response.text();
@@ -163,8 +165,8 @@ async function createDpoToken(
     PaymentAmount: String(input.amount),
     PaymentCurrency: input.currency,
     CompanyRef: input.orderId,
-    RedirectURL: getResultUrl(input.orderId, input.accessToken, input.requestOrigin),
-    BackURL: getResultUrl(input.orderId, input.accessToken, input.requestOrigin),
+    RedirectURL: getResultUrl(input.orderId, input.requestOrigin),
+    BackURL: getResultUrl(input.orderId, input.requestOrigin),
     CompanyRefUnique: "0",
     PTL: "5",
     customerFirstName: input.customerName.split(/\s+/)[0] || "Guest",

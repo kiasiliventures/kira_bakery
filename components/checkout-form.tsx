@@ -92,6 +92,7 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
               longitude: deliveryLocation?.longitude,
             }
           : undefined,
+      deliveryQuoteToken: deliveryMethod === "delivery" ? deliveryQuote?.quoteToken ?? "" : "",
     };
 
     const result = checkoutSchema.safeParse(raw);
@@ -132,7 +133,6 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
         | {
             message?: string;
             id?: string;
-            accessToken?: string;
             redirectUrl?: string;
           }
         | null;
@@ -152,9 +152,6 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
         const params = new URLSearchParams({
           orderId: payload.id,
         });
-        if (payload.accessToken) {
-          params.set("accessToken", payload.accessToken);
-        }
         router.push(`/payment/result?${params.toString()}`);
         return;
       }
@@ -280,7 +277,7 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
           {deliveryMethod === "pickup"
             ? "Pickup keeps your total at the cart subtotal."
             : hasValidDeliveryQuote
-              ? "Delivery fee has been verified and will be recalculated on the server."
+              ? "Delivery fee has been verified and signed by the server."
               : "Choose a verified location before placing a delivery order."}
         </p>
         <Button disabled={items.length === 0 || isSubmitting || (requiresDeliveryQuote && !hasValidDeliveryQuote)}>

@@ -34,6 +34,7 @@ export const checkoutSchema = z
     deliveryDate: optionalTextField,
     notes: z.string().max(300, "Keep notes under 300 characters").optional(),
     deliveryLocation: deliveryLocationSchema.optional(),
+    deliveryQuoteToken: optionalTextField,
   })
   .superRefine((data, ctx) => {
     if (data.deliveryMethod === "delivery") {
@@ -69,6 +70,14 @@ export const checkoutSchema = z
           code: z.ZodIssueCode.custom,
           path: ["deliveryDate"],
           message: "Delivery date is required for delivery",
+        });
+      }
+
+      if (!data.deliveryQuoteToken || data.deliveryQuoteToken.trim().length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["address"],
+          message: "Refresh the delivery quote before placing your order",
         });
       }
     }

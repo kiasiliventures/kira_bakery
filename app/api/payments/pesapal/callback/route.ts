@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { setOrderAccessCookie } from "@/lib/payments/order-access-cookie";
 import {
   syncPesapalPaymentForOrder,
 } from "@/lib/payments/order-payments";
@@ -39,12 +40,13 @@ export async function GET(request: Request) {
   if (orderId) {
     resultUrl.searchParams.set("orderId", orderId);
   }
-  if (accessToken) {
-    resultUrl.searchParams.set("accessToken", accessToken);
-  }
   if (cancelled) {
     resultUrl.searchParams.set("hint", "cancelled");
   }
 
-  return NextResponse.redirect(resultUrl);
+  const response = NextResponse.redirect(resultUrl);
+  if (orderId && accessToken) {
+    setOrderAccessCookie(response, orderId, accessToken);
+  }
+  return response;
 }

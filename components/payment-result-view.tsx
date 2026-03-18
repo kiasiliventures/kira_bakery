@@ -10,12 +10,8 @@ type PaymentResultOrder = {
   orderId: string;
   totalUGX: number;
   paymentStatus: string;
-  orderTrackingId: string | null;
-  paymentReference: string | null;
-  paidAt: string | null;
   viewState: "success" | "failed" | "cancelled" | "pending";
   verified: boolean;
-  providerStatus: string | null;
   items: Array<{
     name: string;
     quantity: number;
@@ -68,30 +64,32 @@ export function PaymentResultView() {
   const hasClearedCartRef = useRef(false);
 
   const orderId = searchParams.get("orderId");
+  const accessToken = searchParams.get("accessToken");
   const hint = searchParams.get("hint") === "cancelled" || searchParams.get("cancelled") === "1"
     ? "cancelled"
     : null;
 
   const statusUrl = useMemo(() => {
-    if (!orderId) {
+    if (!orderId || !accessToken) {
       return null;
     }
     const params = new URLSearchParams({
       orderId,
+      accessToken,
       refresh: "1",
     });
     if (hint) {
       params.set("hint", hint);
     }
     return `/api/payments/pesapal/status?${params.toString()}`;
-  }, [hint, orderId]);
+  }, [accessToken, hint, orderId]);
 
   useEffect(() => {
     let cancelled = false;
 
     async function loadStatus() {
       if (!statusUrl) {
-        setError("Missing order reference.");
+        setError("Missing secure order reference.");
         setIsLoading(false);
         return;
       }
@@ -144,6 +142,7 @@ export function PaymentResultView() {
   useEffect(() => {
     if (
       !orderId
+      || !accessToken
       || isLoading
       || error
       || order?.viewState !== "pending"
@@ -158,7 +157,7 @@ export function PaymentResultView() {
     }, POLL_INTERVAL_MS);
 
     return () => window.clearTimeout(timeout);
-  }, [error, isLoading, order?.viewState, orderId, pollAttempts]);
+  }, [accessToken, error, isLoading, order?.viewState, orderId, pollAttempts]);
 
   return (
     <main className="mx-auto flex min-h-[70vh] w-full max-w-3xl flex-col justify-center px-6 py-16">
@@ -175,9 +174,6 @@ export function PaymentResultView() {
             <p>Amount paid: {formatUGX(order.totalUGX)}</p>
             <p>Payment status: {order.paymentStatus}</p>
             <p>Verified with Pesapal: {order.verified ? "yes" : "no"}</p>
-            {order.providerStatus && <p>Pesapal status: {order.providerStatus}</p>}
-            {order.orderTrackingId && <p>Tracking ID: {order.orderTrackingId}</p>}
-            {order.paymentReference && <p>Reference: {order.paymentReference}</p>}
             {order.items.length > 0 && (
               <div className="pt-2">
                 <p className="font-semibold text-foreground">Items ordered</p>
@@ -211,7 +207,7 @@ export function PaymentResultView() {
               setPollAttempts(0);
               setRequestSequence((current) => current + 1);
             }}
-            disabled={!orderId || isLoading}
+            disabled={!orderId || !accessToken || isLoading}
           >
             Check Status
           </Button>

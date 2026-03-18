@@ -12,7 +12,7 @@ function tooManyRequests(retryAfterSeconds: number) {
 }
 
 export async function POST(request: Request) {
-  const rateLimit = enforceRateLimit(request, "delivery-quote", 20, 60_000);
+  const rateLimit = await enforceRateLimit(request, "delivery-quote", 20, 60_000);
   if (!rateLimit.allowed) {
     return tooManyRequests(rateLimit.retryAfterSeconds);
   }

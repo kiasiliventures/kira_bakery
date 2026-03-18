@@ -11,6 +11,7 @@ import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 type OrderPaymentRow = {
   id: string;
+  order_access_token: string;
   total_ugx: number;
   total_price?: number | null;
   status: string;
@@ -57,14 +58,8 @@ export type OrderPaymentSnapshot = {
   orderStatus: string;
   totalUGX: number;
   paymentStatus: string;
-  paymentProvider: string | null;
-  paymentReference: string | null;
-  orderTrackingId: string | null;
-  redirectUrl: string | null;
-  paidAt: string | null;
   viewState: PaymentViewState;
   verified: boolean;
-  providerStatus: string | null;
   items: Array<{
     name: string;
     quantity: number;
@@ -76,7 +71,6 @@ export type OrderPaymentSnapshot = {
 export type InitiatedOrderPayment = {
   orderId: string;
   redirectUrl: string;
-  orderTrackingId: string;
   paymentStatus: string;
 };
 
@@ -88,6 +82,12 @@ type SyncPaymentInput = {
 };
 
 const PAYMENT_STATUS_REFRESH_REVALIDATE_SECONDS = 15;
+
+class OrderAccessDeniedError extends Error {
+  constructor() {
+    super("Invalid order access token.");
+  }
+}
 
 function normalizeStoredPaymentStatus(paymentStatus: string | null | undefined): PaymentStatus {
   const normalized = paymentStatus?.trim().toLowerCase();
@@ -136,6 +136,7 @@ async function getOrderPaymentRow(orderId: string): Promise<OrderPaymentRow | nu
     .select(
       [
         "id",
+        "order_access_token",
         "total_ugx",
         "total_price",
         "status",
@@ -169,7 +170,6 @@ async function getOrderPaymentRow(orderId: string): Promise<OrderPaymentRow | nu
 function buildSnapshot(
   row: OrderPaymentRow,
   options?: {
-    providerStatus?: string | null;
     verified?: boolean;
     hint?: "cancelled" | "pending";
   },
@@ -180,14 +180,8 @@ function buildSnapshot(
     orderStatus: row.status,
     totalUGX: row.total_ugx,
     paymentStatus,
-    paymentProvider: row.payment_provider,
-    paymentReference: row.payment_reference,
-    orderTrackingId: row.order_tracking_id,
-    redirectUrl: row.payment_redirect_url,
-    paidAt: row.paid_at,
     viewState: mapViewState(paymentStatus, options?.hint),
     verified: options?.verified ?? paymentStatus === "paid",
-    providerStatus: options?.providerStatus ?? null,
     items: (row.order_items ?? []).map((item) => ({
       name: item.name,
       quantity: item.quantity,
@@ -273,13 +267,31 @@ function resolveAttemptCurrency(row: OrderPaymentRow, currency: string | null | 
   return currency?.trim().toUpperCase() || "UGX";
 }
 
+function resolveStoredOrderAmount(row: OrderPaymentRow) {
+  return Math.round(Number(row.total_ugx ?? row.total_price ?? 0));
+}
+
+function assertOrderAccess(row: OrderPaymentRow, accessToken?: string | null) {
+  if (!accessToken || accessToken !== row.order_access_token) {
+    throw new OrderAccessDeniedError();
+  }
+}
+
 export async function initiateOrderPaymentForOrder(
   orderId: string,
-  options?: { requestOrigin?: string | null },
+  options?: {
+    requestOrigin?: string | null;
+    accessToken?: string | null;
+    requireAccessToken?: boolean;
+  },
 ): Promise<InitiatedOrderPayment> {
   const row = await getOrderPaymentRow(orderId);
   if (!row) {
     throw new Error("Order not found.");
+  }
+
+  if (options?.requireAccessToken) {
+    assertOrderAccess(row, options.accessToken);
   }
 
   const providerName = resolveConfiguredProviderForInitiation(row);
@@ -337,13 +349,13 @@ export async function initiateOrderPaymentForOrder(
     return {
       orderId,
       redirectUrl: row.payment_redirect_url,
-      orderTrackingId: row.order_tracking_id,
       paymentStatus: storedPaymentStatus,
     };
   }
 
   const response = await gateway.initiatePayment({
     orderId: row.id,
+    accessToken: row.order_access_token,
     amount: row.total_ugx,
     currency: "UGX",
     description: buildOrderDescription(row.id),
@@ -385,7 +397,6 @@ export async function initiateOrderPaymentForOrder(
   return {
     orderId,
     redirectUrl: response.redirectUrl,
-    orderTrackingId: response.providerReference,
     paymentStatus: response.paymentStatus,
   };
 }
@@ -453,6 +464,43 @@ export async function syncOrderPaymentForOrder(
     merchantReference: input.merchantReference,
     source: input.source,
   });
+  const expectedAmount = resolveStoredOrderAmount(row);
+  const receivedAmount = typeof status.amount === "number" ? Math.round(status.amount) : null;
+
+  if (status.paymentStatus === "paid" && receivedAmount !== expectedAmount) {
+    console.error("payment_amount_mismatch", {
+      orderId: input.orderId,
+      provider: status.provider,
+      providerReference: status.providerReference,
+      source: input.source,
+      expectedAmount,
+      receivedAmount,
+      currency: status.currency ?? "UGX",
+      providerStatus: status.providerStatus,
+    });
+
+    await upsertPaymentAttempt({
+      orderId: row.id,
+      provider: status.provider,
+      providerReference: status.providerReference,
+      amount: receivedAmount ?? expectedAmount,
+      currency: resolveAttemptCurrency(row, status.currency),
+      status: "pending",
+      redirectUrl: row.payment_redirect_url,
+      rawProviderResponse: {
+        verificationRejected: "amount_mismatch",
+        expectedAmount,
+        receivedAmount,
+        providerStatus: status.providerStatus,
+        payload: status.rawResponse,
+      },
+      createdAt: row.created_at,
+      verifiedAt: status.verifiedAt,
+    });
+
+    throw new Error("Payment amount verification failed. Order held for review.");
+  }
+
   const storedPaymentStatus = normalizeStoredPaymentStatus(row.payment_status);
   const nextPaymentStatus = resolveVerifiedPaymentStatus(storedPaymentStatus, status.paymentStatus);
   const nextPaidAt = nextPaymentStatus === "paid" ? row.paid_at ?? status.verifiedAt : row.paid_at;
@@ -469,7 +517,7 @@ export async function syncOrderPaymentForOrder(
     orderId: row.id,
     provider: status.provider,
     providerReference: status.providerReference,
-    amount: status.amount ?? row.total_ugx,
+    amount: receivedAmount ?? expectedAmount,
     currency: resolveAttemptCurrency(row, status.currency),
     status: nextPaymentStatus,
     redirectUrl: row.payment_redirect_url,
@@ -497,7 +545,6 @@ export async function syncOrderPaymentForOrder(
   });
 
   return buildSnapshot(nextRow, {
-    providerStatus: status.providerStatus,
     verified: true,
   });
 }
@@ -507,11 +554,17 @@ export async function getOrderPaymentSnapshot(
   options?: {
     refresh?: boolean;
     hint?: "cancelled" | "pending";
+    accessToken?: string | null;
+    requireAccessToken?: boolean;
   },
 ): Promise<OrderPaymentSnapshot> {
   const row = await getOrderPaymentRow(orderId);
   if (!row) {
     throw new Error("Order not found.");
+  }
+
+  if (options?.requireAccessToken) {
+    assertOrderAccess(row, options.accessToken);
   }
 
   const paymentStatus = normalizeStoredPaymentStatus(row.payment_status);
@@ -539,3 +592,12 @@ export async function getOrderPaymentSnapshot(
 
 export const initiatePesapalPaymentForOrder = initiateOrderPaymentForOrder;
 export const syncPesapalPaymentForOrder = syncOrderPaymentForOrder;
+
+export async function getOrderAccessToken(orderId: string): Promise<string | null> {
+  const row = await getOrderPaymentRow(orderId);
+  return row?.order_access_token ?? null;
+}
+
+export function isOrderAccessDeniedError(error: unknown) {
+  return error instanceof OrderAccessDeniedError;
+}

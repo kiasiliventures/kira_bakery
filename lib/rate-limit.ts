@@ -1,4 +1,7 @@
-const buckets = new Map<string, { count: number; resetAt: number }>();
+import "server-only";
+
+import { createHash } from "node:crypto";
+import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 type RateLimitResult = {
   allowed: boolean;
@@ -6,47 +9,131 @@ type RateLimitResult = {
   retryAfterSeconds: number;
 };
 
-function getClientIp(request: Request): string {
-  const forwarded = request.headers.get("x-forwarded-for");
-  if (forwarded) {
-    return forwarded.split(",")[0]?.trim() || "unknown";
-  }
+type LocalBucket = {
+  hits: number;
+  expiresAt: number;
+};
 
-  return request.headers.get("x-real-ip") ?? "unknown";
+const localRateLimitStore = new Map<string, LocalBucket>();
+
+function hasKnownProxyMarker(request: Request) {
+  return Boolean(
+    request.headers.get("cf-ray")
+    || request.headers.get("fly-region")
+    || request.headers.get("x-vercel-id"),
+  );
 }
 
-export function enforceRateLimit(
-  request: Request,
-  key: string,
+function getClientIp(request: Request): string {
+  const trustedHeaderCandidates = ["cf-connecting-ip", "fly-client-ip"];
+
+  for (const header of trustedHeaderCandidates) {
+    const value = request.headers.get(header);
+    if (!value) {
+      continue;
+    }
+
+    return value.trim();
+  }
+
+  const allowGenericForwardingHeaders =
+    process.env.NODE_ENV !== "production" || hasKnownProxyMarker(request);
+
+  if (allowGenericForwardingHeaders) {
+    const realIp = request.headers.get("x-real-ip")?.trim();
+    if (realIp) {
+      return realIp;
+    }
+
+    const forwardedFor = request.headers.get("x-forwarded-for");
+    if (forwardedFor) {
+      return forwardedFor.split(",")[0]?.trim() || "unknown";
+    }
+  }
+
+  return "unknown";
+}
+
+function buildRateLimitKey(request: Request, key: string) {
+  const clientIp = getClientIp(request);
+  const userAgent = request.headers.get("user-agent")?.trim() || "unknown";
+  const fingerprint = createHash("sha256")
+    .update(`${clientIp}|${userAgent}`)
+    .digest("hex");
+
+  return `${key}:${fingerprint}`;
+}
+
+function consumeLocalRateLimit(
+  bucketKey: string,
   limit: number,
   windowMs: number,
 ): RateLimitResult {
   const now = Date.now();
-  const bucketKey = `${key}:${getClientIp(request)}`;
-  const existing = buckets.get(bucketKey);
 
-  if (!existing || existing.resetAt <= now) {
-    buckets.set(bucketKey, { count: 1, resetAt: now + windowMs });
+  for (const [key, value] of localRateLimitStore.entries()) {
+    if (value.expiresAt <= now) {
+      localRateLimitStore.delete(key);
+    }
+  }
+
+  const existing = localRateLimitStore.get(bucketKey);
+  if (!existing || existing.expiresAt <= now) {
+    localRateLimitStore.set(bucketKey, {
+      hits: 1,
+      expiresAt: now + windowMs,
+    });
     return {
       allowed: true,
       remaining: Math.max(0, limit - 1),
-      retryAfterSeconds: Math.ceil(windowMs / 1000),
+      retryAfterSeconds: Math.max(1, Math.ceil(windowMs / 1000)),
     };
   }
 
-  if (existing.count >= limit) {
-    return {
-      allowed: false,
-      remaining: 0,
-      retryAfterSeconds: Math.max(1, Math.ceil((existing.resetAt - now) / 1000)),
-    };
-  }
+  existing.hits += 1;
+  localRateLimitStore.set(bucketKey, existing);
 
-  existing.count += 1;
-  buckets.set(bucketKey, existing);
   return {
-    allowed: true,
-    remaining: Math.max(0, limit - existing.count),
-    retryAfterSeconds: Math.max(1, Math.ceil((existing.resetAt - now) / 1000)),
+    allowed: existing.hits <= limit,
+    remaining: Math.max(0, limit - Math.min(existing.hits, limit)),
+    retryAfterSeconds: Math.max(1, Math.ceil((existing.expiresAt - now) / 1000)),
+  };
+}
+
+export async function enforceRateLimit(
+  request: Request,
+  key: string,
+  limit: number,
+  windowMs: number,
+): Promise<RateLimitResult> {
+  const supabase = getSupabaseServerClient();
+  const bucketKey = buildRateLimitKey(request, key);
+  const { data, error } = await supabase.rpc("consume_rate_limit", {
+    rate_key: bucketKey,
+    max_requests: limit,
+    window_seconds: Math.max(1, Math.ceil(windowMs / 1000)),
+  });
+
+  if (error) {
+    console.error("rate_limit_consume_failed", {
+      key,
+      error: error.message,
+    });
+    return consumeLocalRateLimit(bucketKey, limit, windowMs);
+  }
+
+  const row = Array.isArray(data) ? data[0] : null;
+  if (!row) {
+    console.error("rate_limit_consume_empty_response", { key });
+    return consumeLocalRateLimit(bucketKey, limit, windowMs);
+  }
+
+  return {
+    allowed: Boolean(row.allowed),
+    remaining: typeof row.remaining === "number" ? row.remaining : 0,
+    retryAfterSeconds:
+      typeof row.retry_after_seconds === "number"
+        ? Math.max(1, row.retry_after_seconds)
+        : Math.max(1, Math.ceil(windowMs / 1000)),
   };
 }

@@ -12,7 +12,7 @@ function tooManyRequests(retryAfterSeconds: number) {
 }
 
 export async function GET(request: Request) {
-  const rateLimit = enforceRateLimit(request, "delivery-autocomplete", 30, 60_000);
+  const rateLimit = await enforceRateLimit(request, "delivery-autocomplete", 30, 60_000);
   if (!rateLimit.allowed) {
     return tooManyRequests(rateLimit.retryAfterSeconds);
   }

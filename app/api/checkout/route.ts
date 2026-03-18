@@ -4,6 +4,7 @@ import { z } from "zod";
 import { isDeliveryError } from "@/lib/delivery/errors";
 import { quoteDelivery } from "@/lib/delivery/service";
 import {
+  getOrderAccessToken,
   getOrderPaymentSnapshot,
   initiateOrderPaymentForOrder,
 } from "@/lib/payments/order-payments";
@@ -56,9 +57,9 @@ type CanonicalCheckoutItem = {
 type StoredCheckoutResponse = {
   ok?: boolean;
   id?: string;
+  accessToken?: string;
   message?: string;
   redirectUrl?: string;
-  orderTrackingId?: string;
   paymentStatus?: string;
 };
 
@@ -367,24 +368,27 @@ async function resumeCheckoutAttempt(
   });
 
   try {
+    const accessToken = await getOrderAccessToken(row.resource_id);
     const payment = await initiateOrderPaymentForOrder(row.resource_id, {
       requestOrigin,
     });
     const responseBody = {
       ok: true,
       id: row.resource_id,
+      accessToken: accessToken ?? undefined,
       redirectUrl: payment.redirectUrl,
-      orderTrackingId: payment.orderTrackingId,
       paymentStatus: payment.paymentStatus,
     };
     await finalizeCheckoutAttempt(row.key, 200, responseBody);
     return NextResponse.json(responseBody, { status: 200 });
   } catch (error) {
     if (error instanceof Error && error.message === "Order has already been paid.") {
+      const accessToken = await getOrderAccessToken(row.resource_id);
       const snapshot = await getOrderPaymentSnapshot(row.resource_id, { refresh: false });
       const responseBody = {
         ok: true,
         id: row.resource_id,
+        accessToken: accessToken ?? undefined,
         paymentStatus: snapshot.paymentStatus,
       };
       await finalizeCheckoutAttempt(row.key, 200, responseBody);
@@ -401,7 +405,7 @@ async function resumeCheckoutAttempt(
 
 export async function POST(request: Request) {
   const requestOrigin = new URL(request.url).origin;
-  const rateLimit = enforceRateLimit(request, "checkout", 12, 60_000);
+  const rateLimit = await enforceRateLimit(request, "checkout", 12, 60_000);
   if (!rateLimit.allowed) {
     return tooManyRequests(rateLimit.retryAfterSeconds);
   }
@@ -479,6 +483,7 @@ export async function POST(request: Request) {
 
   const totalUGX = subtotalUGX + (deliveryQuote?.deliveryFee ?? 0);
   const orderId = randomUUID();
+  const orderAccessToken = randomUUID();
   const supabase = getSupabaseServerClient();
 
   console.info("CHECKOUT_INIT", {
@@ -524,6 +529,7 @@ export async function POST(request: Request) {
   const { customer } = parsed.data;
   const { error } = await supabase.rpc("place_guest_order", {
     order_id: orderId,
+    order_access_token: orderAccessToken,
     order_total_ugx: totalUGX,
     order_status: "Pending",
     order_fulfillment_method: customer.deliveryMethod,
@@ -590,8 +596,8 @@ export async function POST(request: Request) {
   const responseBody = {
     ok: true,
     id: orderId,
+    accessToken: orderAccessToken,
     redirectUrl: payment.redirectUrl,
-    orderTrackingId: payment.orderTrackingId,
     paymentStatus: payment.paymentStatus,
   };
   await finalizeCheckoutAttempt(idempotencyKey, 200, responseBody);

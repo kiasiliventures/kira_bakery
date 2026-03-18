@@ -53,6 +53,7 @@ type PesapalRegisterIpnResponse = {
 
 export type PesapalSubmitOrderInput = {
   orderId: string;
+  accessToken?: string | null;
   amountUGX: number;
   description: string;
   customerName: string;
@@ -102,6 +103,10 @@ const provider: PaymentProviderName = "pesapal";
 let tokenCache: TokenCache | null = null;
 let ipnRegistrationCache: string | null = null;
 
+function isProductionRuntime() {
+  return process.env.NODE_ENV === "production";
+}
+
 function getBaseUrl() {
   return getRequiredEnv("PESAPAL_BASE_URL").replace(/\/+$/, "");
 }
@@ -123,33 +128,67 @@ function buildRuntimeUrl(pathname: string, requestOrigin?: string | null) {
   throw new Error(`Unable to build runtime URL for ${pathname}.`);
 }
 
-function getCallbackUrl(orderId: string, requestOrigin?: string | null) {
-  const configured = process.env.PESAPAL_CALLBACK_URL?.trim();
+function getConfiguredOrRuntimeUrl(
+  envName: "PESAPAL_CALLBACK_URL" | "PESAPAL_IPN_URL",
+  pathname: string,
+  requestOrigin?: string | null,
+) {
+  const configured = process.env[envName]?.trim();
   if (configured) {
-    const url = new URL(configured);
-    url.searchParams.set("orderId", orderId);
-    return url.toString();
+    return configured;
   }
 
-  const url = new URL(buildRuntimeUrl("/api/payments/pesapal/callback", requestOrigin));
+  if (isProductionRuntime()) {
+    throw new Error(`Missing required environment variable: ${envName}`);
+  }
+
+  return buildRuntimeUrl(pathname, requestOrigin);
+}
+
+function getCallbackUrl(
+  orderId: string,
+  accessToken?: string | null,
+  requestOrigin?: string | null,
+) {
+  const url = new URL(
+    getConfiguredOrRuntimeUrl(
+      "PESAPAL_CALLBACK_URL",
+      "/api/payments/pesapal/callback",
+      requestOrigin,
+    ),
+  );
   url.searchParams.set("orderId", orderId);
+  if (accessToken) {
+    url.searchParams.set("accessToken", accessToken);
+  }
   return url.toString();
 }
 
-function getCancellationUrl(orderId: string, requestOrigin?: string | null) {
-  const configured = process.env.PESAPAL_CALLBACK_URL?.trim();
+function getCancellationUrl(
+  orderId: string,
+  accessToken?: string | null,
+  requestOrigin?: string | null,
+) {
   const url = new URL(
-    configured || buildRuntimeUrl("/api/payments/pesapal/callback", requestOrigin),
+    getConfiguredOrRuntimeUrl(
+      "PESAPAL_CALLBACK_URL",
+      "/api/payments/pesapal/callback",
+      requestOrigin,
+    ),
   );
   url.searchParams.set("orderId", orderId);
+  if (accessToken) {
+    url.searchParams.set("accessToken", accessToken);
+  }
   url.searchParams.set("cancelled", "1");
   return url.toString();
 }
 
 function getIpnUrl(requestOrigin?: string | null) {
-  return (
-    process.env.PESAPAL_IPN_URL?.trim()
-    || buildRuntimeUrl("/api/payments/pesapal/ipn", requestOrigin)
+  return getConfiguredOrRuntimeUrl(
+    "PESAPAL_IPN_URL",
+    "/api/payments/pesapal/ipn",
+    requestOrigin,
   );
 }
 
@@ -317,8 +356,8 @@ export async function submitPesapalOrderRequest(
     currency: "UGX",
     amount: input.amountUGX,
     description: input.description,
-    callback_url: getCallbackUrl(input.orderId, input.requestOrigin),
-    cancellation_url: getCancellationUrl(input.orderId, input.requestOrigin),
+    callback_url: getCallbackUrl(input.orderId, input.accessToken, input.requestOrigin),
+    cancellation_url: getCancellationUrl(input.orderId, input.accessToken, input.requestOrigin),
     notification_id: notificationId,
     billing_address: {
       email_address: input.email ?? "",
@@ -418,6 +457,7 @@ export function createPesapalGateway(): PaymentGateway {
     async initiatePayment(input: PaymentInitiationInput): Promise<PaymentInitiationResult> {
       const response = await submitPesapalOrderRequest({
         orderId: input.orderId,
+        accessToken: input.accessToken,
         amountUGX: input.amount,
         description: input.description,
         customerName: input.customerName,

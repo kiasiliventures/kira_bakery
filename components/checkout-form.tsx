@@ -132,6 +132,7 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
         | {
             message?: string;
             id?: string;
+            accessToken?: string;
             redirectUrl?: string;
           }
         | null;
@@ -148,7 +149,13 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
       }
 
       if (payload?.id) {
-        router.push(`/payment/result?orderId=${encodeURIComponent(payload.id)}`);
+        const params = new URLSearchParams({
+          orderId: payload.id,
+        });
+        if (payload.accessToken) {
+          params.set("accessToken", payload.accessToken);
+        }
+        router.push(`/payment/result?${params.toString()}`);
         return;
       }
 

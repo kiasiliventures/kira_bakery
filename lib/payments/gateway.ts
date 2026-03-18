@@ -16,6 +16,7 @@ export type PaymentSyncSource =
 
 export type PaymentInitiationInput = {
   orderId: string;
+  accessToken?: string | null;
   amount: number;
   currency: string;
   description: string;

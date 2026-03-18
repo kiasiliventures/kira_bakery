@@ -63,9 +63,16 @@ function buildCheckoutRedirectUrl(transactionToken: string) {
   return new URL(`/payv2.php?ID=${encodeURIComponent(transactionToken)}`, `${baseUrl.origin}/`).toString();
 }
 
-function getResultUrl(orderId: string, requestOrigin?: string | null) {
+function getResultUrl(
+  orderId: string,
+  accessToken?: string | null,
+  requestOrigin?: string | null,
+) {
   const url = new URL(buildRuntimeUrl("/payment/result", requestOrigin));
   url.searchParams.set("orderId", orderId);
+  if (accessToken) {
+    url.searchParams.set("accessToken", accessToken);
+  }
   return url.toString();
 }
 
@@ -156,8 +163,8 @@ async function createDpoToken(
     PaymentAmount: String(input.amount),
     PaymentCurrency: input.currency,
     CompanyRef: input.orderId,
-    RedirectURL: getResultUrl(input.orderId, input.requestOrigin),
-    BackURL: getResultUrl(input.orderId, input.requestOrigin),
+    RedirectURL: getResultUrl(input.orderId, input.accessToken, input.requestOrigin),
+    BackURL: getResultUrl(input.orderId, input.accessToken, input.requestOrigin),
     CompanyRefUnique: "0",
     PTL: "5",
     customerFirstName: input.customerName.split(/\s+/)[0] || "Guest",

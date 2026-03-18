@@ -1,13 +1,7 @@
 import { NextResponse } from "next/server";
-import { syncPesapalPaymentForOrder } from "@/lib/payments/order-payments";
-
-function buildResultUrl(request: Request, searchParams: URLSearchParams) {
-  const resultUrl = new URL("/payment/result", request.url);
-  for (const [key, value] of searchParams.entries()) {
-    resultUrl.searchParams.set(key, value);
-  }
-  return resultUrl;
-}
+import {
+  syncPesapalPaymentForOrder,
+} from "@/lib/payments/order-payments";
 
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url);
@@ -15,6 +9,7 @@ export async function GET(request: Request) {
     requestUrl.searchParams.get("orderId")?.trim()
     || requestUrl.searchParams.get("OrderMerchantReference")?.trim();
   const orderTrackingId = requestUrl.searchParams.get("OrderTrackingId")?.trim();
+  const accessToken = requestUrl.searchParams.get("accessToken")?.trim();
   const cancelled = requestUrl.searchParams.get("cancelled") === "1";
 
   console.info("pesapal_callback_received", {
@@ -40,12 +35,12 @@ export async function GET(request: Request) {
     }
   }
 
-  const resultUrl = buildResultUrl(request, requestUrl.searchParams);
+  const resultUrl = new URL("/payment/result", request.url);
   if (orderId) {
     resultUrl.searchParams.set("orderId", orderId);
   }
-  if (orderTrackingId) {
-    resultUrl.searchParams.set("orderTrackingId", orderTrackingId);
+  if (accessToken) {
+    resultUrl.searchParams.set("accessToken", accessToken);
   }
   if (cancelled) {
     resultUrl.searchParams.set("hint", "cancelled");

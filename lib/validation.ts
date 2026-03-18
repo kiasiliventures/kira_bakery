@@ -1,5 +1,26 @@
 import { z } from "zod";
 
+function emptyStringToUndefined(value: unknown) {
+  if (typeof value === "string" && value.trim().length === 0) {
+    return undefined;
+  }
+
+  return value;
+}
+
+const optionalTextField = z.string().optional().or(z.literal(""));
+const optionalFiniteNumber = z.preprocess(
+  emptyStringToUndefined,
+  z.number().finite().optional(),
+);
+
+export const deliveryLocationSchema = z.object({
+  placeId: optionalTextField,
+  addressText: optionalTextField,
+  latitude: optionalFiniteNumber,
+  longitude: optionalFiniteNumber,
+});
+
 export const checkoutSchema = z
   .object({
     deliveryMethod: z.enum(["delivery", "pickup"]),
@@ -9,9 +30,10 @@ export const checkoutSchema = z
       .min(9, "Phone is required")
       .regex(/^\+?[0-9]{9,15}$/, "Use a valid phone number"),
     email: z.string().email("Use a valid email").optional().or(z.literal("")),
-    address: z.string().optional().or(z.literal("")),
-    deliveryDate: z.string().optional().or(z.literal("")),
+    address: optionalTextField,
+    deliveryDate: optionalTextField,
     notes: z.string().max(300, "Keep notes under 300 characters").optional(),
+    deliveryLocation: deliveryLocationSchema.optional(),
   })
   .superRefine((data, ctx) => {
     if (data.deliveryMethod === "delivery") {
@@ -20,6 +42,25 @@ export const checkoutSchema = z
           code: z.ZodIssueCode.custom,
           path: ["address"],
           message: "Address is required for delivery",
+        });
+      }
+
+      if (!data.deliveryLocation?.placeId?.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["address"],
+          message: "Select a valid delivery location from search results",
+        });
+      }
+
+      if (
+        typeof data.deliveryLocation?.latitude !== "number"
+        || typeof data.deliveryLocation?.longitude !== "number"
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["address"],
+          message: "We need a verified delivery location before you can continue",
         });
       }
 
@@ -32,6 +73,18 @@ export const checkoutSchema = z
       }
     }
   });
+
+export const deliveryQuoteRequestSchema = z.object({
+  placeId: z.string().min(1, "A delivery place is required"),
+  addressText: z.string().min(3, "A delivery address is required"),
+  latitude: optionalFiniteNumber,
+  longitude: optionalFiniteNumber,
+});
+
+export const deliveryAutocompleteRequestSchema = z.object({
+  input: z.string().min(3, "Enter at least 3 characters"),
+  sessionToken: optionalTextField,
+});
 
 export const cakeBuilderSchema = z
   .object({

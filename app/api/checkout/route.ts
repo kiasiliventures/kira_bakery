@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { isDeliveryError } from "@/lib/delivery/errors";
+import { quoteDelivery } from "@/lib/delivery/service";
 import {
   getOrderPaymentSnapshot,
   initiateOrderPaymentForOrder,
@@ -445,7 +447,37 @@ export async function POST(request: Request) {
   }
 
   const items = canonical.items;
-  const totalUGX = items.reduce((sum, item) => sum + item.priceUGX * item.quantity, 0);
+  const subtotalUGX = items.reduce((sum, item) => sum + item.priceUGX * item.quantity, 0);
+  let deliveryQuote = null as Awaited<ReturnType<typeof quoteDelivery>> | null;
+
+  if (parsed.data.customer.deliveryMethod === "delivery") {
+    try {
+      deliveryQuote = await quoteDelivery({
+        placeId: parsed.data.customer.deliveryLocation?.placeId ?? "",
+        addressText:
+          parsed.data.customer.deliveryLocation?.addressText
+          ?? parsed.data.customer.address
+          ?? "",
+        latitude: parsed.data.customer.deliveryLocation?.latitude,
+        longitude: parsed.data.customer.deliveryLocation?.longitude,
+      });
+    } catch (error) {
+      if (isDeliveryError(error)) {
+        return NextResponse.json(
+          { message: error.publicMessage, code: error.code },
+          { status: error.status },
+        );
+      }
+
+      console.error("checkout_delivery_quote_failed", error);
+      return NextResponse.json(
+        { message: "Unable to validate delivery pricing right now." },
+        { status: 500 },
+      );
+    }
+  }
+
+  const totalUGX = subtotalUGX + (deliveryQuote?.deliveryFee ?? 0);
   const orderId = randomUUID();
   const supabase = getSupabaseServerClient();
 
@@ -494,13 +526,32 @@ export async function POST(request: Request) {
     order_id: orderId,
     order_total_ugx: totalUGX,
     order_status: "Pending",
-    order_delivery_method: customer.deliveryMethod,
+    order_fulfillment_method: customer.deliveryMethod,
     order_customer_name: customer.customerName,
     order_phone: customer.phone,
     order_email: customer.email || "",
-    order_address: customer.address || "",
+    order_delivery_address_text:
+      customer.deliveryMethod === "delivery"
+        ? deliveryQuote?.destination.addressText ?? customer.address ?? ""
+        : "",
     order_delivery_date: customer.deliveryDate || null,
     order_notes: customer.notes || "",
+    order_delivery_place_id:
+      customer.deliveryMethod === "delivery"
+        ? deliveryQuote?.destination.placeId ?? customer.deliveryLocation?.placeId ?? null
+        : null,
+    order_delivery_latitude:
+      customer.deliveryMethod === "delivery" ? deliveryQuote?.destination.latitude ?? null : null,
+    order_delivery_longitude:
+      customer.deliveryMethod === "delivery" ? deliveryQuote?.destination.longitude ?? null : null,
+    order_delivery_distance_km:
+      customer.deliveryMethod === "delivery" ? deliveryQuote?.distanceKm ?? null : null,
+    order_delivery_fee:
+      customer.deliveryMethod === "delivery" ? deliveryQuote?.deliveryFee ?? 0 : 0,
+    order_delivery_pricing_config_id:
+      customer.deliveryMethod === "delivery" ? deliveryQuote?.pricingConfigId ?? null : null,
+    order_delivery_store_location_id:
+      customer.deliveryMethod === "delivery" ? deliveryQuote?.storeLocationId ?? null : null,
     order_items: items.map((item) => ({
       product_id: item.productId || null,
       name: item.name,

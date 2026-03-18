@@ -19,6 +19,12 @@ export type CheckoutFormData = {
   address?: string;
   deliveryDate?: string;
   notes?: string;
+  deliveryLocation?: {
+    placeId?: string;
+    addressText?: string;
+    latitude?: number;
+    longitude?: number;
+  };
 };
 
 export type CakeBuilderFormData = {

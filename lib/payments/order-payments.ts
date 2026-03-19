@@ -55,6 +55,7 @@ export type PaymentViewState = "success" | "failed" | "cancelled" | "pending";
 
 export type OrderPaymentSnapshot = {
   orderId: string;
+  customerName: string;
   orderStatus: string;
   totalUGX: number;
   paymentStatus: string;
@@ -192,6 +193,7 @@ function buildSnapshot(
   const paymentStatus = normalizeStoredPaymentStatus(row.payment_status);
   return {
     orderId: row.id,
+    customerName: row.customer_name,
     orderStatus: row.status,
     totalUGX: row.total_ugx,
     paymentStatus,

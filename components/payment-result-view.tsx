@@ -8,6 +8,7 @@ import { formatUGX } from "@/lib/format";
 
 type PaymentResultOrder = {
   orderId: string;
+  customerName: string;
   totalUGX: number;
   paymentStatus: string;
   viewState: "success" | "failed" | "cancelled" | "pending";
@@ -42,7 +43,7 @@ function getMessage(order: PaymentResultOrder | null) {
   }
 
   if (order.viewState === "success") {
-    return "Your payment was verified by the backend. We have kept the order active and it can proceed.";
+    return `Hi ${order.customerName}, we’ve confirmed your payment and your order is now moving ahead.`;
   }
   if (order.viewState === "failed") {
     return "Pesapal reported the transaction as failed. Your stock remains untouched.";

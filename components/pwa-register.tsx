@@ -25,7 +25,9 @@ export function PwaRegister() {
       return;
     }
 
-    void navigator.serviceWorker.register("/sw.js");
+    void navigator.serviceWorker.register("/sw.js").catch((error) => {
+      console.error("service_worker_registration_failed", error);
+    });
   }, []);
 
   return null;

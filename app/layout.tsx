@@ -35,6 +35,38 @@ export const metadata: Metadata = {
   title: "KiRA Bakery",
   description: "Delicious baked fresh daily in Kira, Uganda.",
   manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    title: "KiRA Bakery",
+    statusBarStyle: "default",
+  },
+  icons: {
+    shortcut: [
+      {
+        url: "/icon.png",
+        type: "image/png",
+      },
+    ],
+    apple: [
+      {
+        url: "/icons/apple-touch-icon-180.png",
+        sizes: "180x180",
+        type: "image/png",
+      },
+    ],
+    icon: [
+      {
+        url: "/icons/icon-192.png",
+        sizes: "192x192",
+        type: "image/png",
+      },
+      {
+        url: "/icons/icon-512.png",
+        sizes: "512x512",
+        type: "image/png",
+      },
+    ],
+  },
 };
 
 export const viewport: Viewport = {

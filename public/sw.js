@@ -9,8 +9,9 @@ const STATIC_PATHS = [
   "/contact",
   "/offline",
   "/manifest.webmanifest",
-  "/icons/icon-192.svg",
-  "/icons/icon-512.svg",
+  "/icons/apple-touch-icon-180.png",
+  "/icons/icon-192.png",
+  "/icons/icon-512.png",
   "/images/hero_image.png",
 ];
 

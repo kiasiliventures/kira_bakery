@@ -1,5 +1,6 @@
 import "server-only";
 
+import { unstable_cache } from "next/cache";
 import type { CakeConfig, CakeConfigOption, CakePrice, CakeTierOption } from "@/types/cakes";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -34,6 +35,7 @@ const cakeOptionSelection = "id,code,name,sort_order,is_active";
 const cakeTierOptionSelection = `${cakeOptionSelection},tier_count`;
 const cakePriceSelection =
   "id,flavour_id,shape_id,size_id,tier_option_id,topping_id,weight_kg,price_ugx,source_note,is_active,created_at,updated_at";
+const CAKE_BUILDER_REVALIDATE_SECONDS = 300;
 
 function parseNumber(value: number | string) {
   return typeof value === "number" ? value : Number(value);
@@ -81,7 +83,16 @@ function sortPrices(rows: CakePrice[]) {
   });
 }
 
-async function loadCollections() {
+type CakeCollections = {
+  flavourRows: CakeOptionRow[];
+  shapeRows: CakeOptionRow[];
+  sizeRows: CakeOptionRow[];
+  toppingRows: CakeOptionRow[];
+  tierOptionRows: CakeTierOptionRow[];
+  prices: CakePriceRow[];
+};
+
+async function loadCollectionsUncached(): Promise<CakeCollections> {
   const supabase = getSupabaseServerClient();
   const [flavoursResult, shapesResult, sizesResult, toppingsResult, tierOptionsResult, pricesResult] =
     await Promise.all([
@@ -112,12 +123,18 @@ async function loadCollections() {
     sizeRows: (sizesResult.data ?? []) as CakeOptionRow[],
     toppingRows: (toppingsResult.data ?? []) as CakeOptionRow[],
     tierOptionRows: (tierOptionsResult.data ?? []) as CakeTierOptionRow[],
-    prices: (pricesResult.data ?? []) as CakePriceRow[],
+      prices: (pricesResult.data ?? []) as CakePriceRow[],
   };
 }
 
-export async function getCakeConfig(): Promise<CakeConfig> {
-  const { flavourRows, shapeRows, sizeRows, toppingRows, tierOptionRows } = await loadCollections();
+const getCachedCollections = unstable_cache(
+  async () => loadCollectionsUncached(),
+  ["cake-builder-collections"],
+  { revalidate: CAKE_BUILDER_REVALIDATE_SECONDS },
+);
+
+function buildCakeConfig(collections: CakeCollections): CakeConfig {
+  const { flavourRows, shapeRows, sizeRows, toppingRows, tierOptionRows } = collections;
 
   return {
     flavours: sortOptions(flavourRows.filter((row) => row.is_active).map(mapOption)),
@@ -128,8 +145,8 @@ export async function getCakeConfig(): Promise<CakeConfig> {
   };
 }
 
-export async function getCakePrices(): Promise<CakePrice[]> {
-  const { flavourRows, shapeRows, sizeRows, toppingRows, tierOptionRows, prices } = await loadCollections();
+function buildCakePrices(collections: CakeCollections): CakePrice[] {
+  const { flavourRows, shapeRows, sizeRows, toppingRows, tierOptionRows, prices } = collections;
   const flavourMap = new Map(flavourRows.filter((row) => row.is_active).map((row) => [row.id, row]));
   const shapeMap = new Map(shapeRows.filter((row) => row.is_active).map((row) => [row.id, row]));
   const sizeMap = new Map(sizeRows.filter((row) => row.is_active).map((row) => [row.id, row]));
@@ -178,6 +195,24 @@ export async function getCakePrices(): Promise<CakePrice[]> {
     .filter((price): price is CakePrice => price !== null);
 
   return sortPrices(activePrices);
+}
+
+export async function getCakeBuilderData(): Promise<{ config: CakeConfig; prices: CakePrice[] }> {
+  const collections = await getCachedCollections();
+  return {
+    config: buildCakeConfig(collections),
+    prices: buildCakePrices(collections),
+  };
+}
+
+export async function getCakeConfig(): Promise<CakeConfig> {
+  const { config } = await getCakeBuilderData();
+  return config;
+}
+
+export async function getCakePrices(): Promise<CakePrice[]> {
+  const { prices } = await getCakeBuilderData();
+  return prices;
 }
 
 export async function createCakeCustomRequest(input: {

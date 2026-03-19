@@ -31,6 +31,10 @@ type BuilderState = CakeSelection & {
 };
 
 type FieldName = keyof CakeSelection;
+type CakeBuilderFormProps = {
+  initialConfig?: CakeConfig | null;
+  initialPrices?: CakePrice[];
+};
 
 const emptyState: BuilderState = {
   flavourId: "",
@@ -64,19 +68,27 @@ function getAvailableIdsForField(
   return getDistinctIds(prices, scopedSelection, field);
 }
 
-export function CakeBuilderForm() {
-  const [config, setConfig] = useState<CakeConfig | null>(null);
-  const [prices, setPrices] = useState<CakePrice[]>([]);
+export function CakeBuilderForm({
+  initialConfig = null,
+  initialPrices = [],
+}: CakeBuilderFormProps) {
+  const [config, setConfig] = useState<CakeConfig | null>(initialConfig);
+  const [prices, setPrices] = useState<CakePrice[]>(initialPrices);
   const [form, setForm] = useState<BuilderState>(emptyState);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [status, setStatus] = useState<{ tone: "idle" | "success" | "error"; text: string }>({
     tone: "idle",
     text: "",
   });
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(!(initialConfig && initialPrices.length > 0));
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const hasInitialData = Boolean(initialConfig && initialPrices.length > 0);
 
   useEffect(() => {
+    if (hasInitialData) {
+      return;
+    }
+
     let cancelled = false;
 
     async function load() {
@@ -84,32 +96,21 @@ export function CakeBuilderForm() {
       setStatus({ tone: "idle", text: "" });
 
       try {
-        const [configResponse, pricesResponse] = await Promise.all([
-          fetch("/api/cakes/config", { cache: "no-store" }),
-          fetch("/api/cakes/prices", { cache: "no-store" }),
-        ]);
-
-        const configPayload = (await configResponse.json().catch(() => null)) as
-          | { config?: CakeConfig; message?: string }
-          | null;
-        const pricesPayload = (await pricesResponse.json().catch(() => null)) as
-          | { prices?: CakePrice[]; message?: string }
+        const response = await fetch("/api/cakes/builder", { cache: "no-store" });
+        const payload = (await response.json().catch(() => null)) as
+          | { config?: CakeConfig; prices?: CakePrice[]; message?: string }
           | null;
 
-        if (!configResponse.ok) {
-          throw new Error(configPayload?.message ?? "Unable to load cake options.");
-        }
-
-        if (!pricesResponse.ok) {
-          throw new Error(pricesPayload?.message ?? "Unable to load cake prices.");
+        if (!response.ok) {
+          throw new Error(payload?.message ?? "Unable to load cake builder.");
         }
 
         if (cancelled) {
           return;
         }
 
-        setConfig(configPayload?.config ?? null);
-        setPrices(pricesPayload?.prices ?? []);
+        setConfig(payload?.config ?? null);
+        setPrices(payload?.prices ?? []);
       } catch (error) {
         if (!cancelled) {
           setStatus({
@@ -129,7 +130,7 @@ export function CakeBuilderForm() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [hasInitialData]);
 
   const selectionKey = [
     form.shapeId,

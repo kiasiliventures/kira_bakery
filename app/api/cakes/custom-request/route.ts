@@ -1,9 +1,22 @@
 import { NextResponse } from "next/server";
 import { cakeRequestSchema } from "@/lib/cakes";
 import { createCakeCustomRequest, getCakePrices } from "@/lib/cakes-data";
+import { enforceRateLimit } from "@/lib/rate-limit";
+
+function tooManyRequests(retryAfterSeconds: number) {
+  return NextResponse.json(
+    { message: "Too many requests. Please wait and try again." },
+    { status: 429, headers: { "Retry-After": String(retryAfterSeconds) } },
+  );
+}
 
 export async function POST(request: Request) {
   try {
+    const rateLimit = await enforceRateLimit(request, "cake-custom-request", 10, 15 * 60_000);
+    if (!rateLimit.allowed) {
+      return tooManyRequests(rateLimit.retryAfterSeconds);
+    }
+
     const body = await request.json();
     const parsed = cakeRequestSchema.safeParse(body);
 

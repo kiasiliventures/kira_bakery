@@ -15,6 +15,10 @@ type LocalBucket = {
 };
 
 const localRateLimitStore = new Map<string, LocalBucket>();
+const LOCAL_RATE_LIMIT_CLEANUP_INTERVAL_MS = 60_000;
+const LOCAL_RATE_LIMIT_MAX_BUCKETS = 5_000;
+
+let lastLocalRateLimitCleanupAt = 0;
 
 function hasKnownProxyMarker(request: Request) {
   return Boolean(
@@ -64,21 +68,68 @@ function buildRateLimitKey(request: Request, key: string) {
   return `${key}:${fingerprint}`;
 }
 
+function pruneExpiredLocalBuckets(now: number) {
+  for (const [key, value] of localRateLimitStore.entries()) {
+    if (value.expiresAt <= now) {
+      localRateLimitStore.delete(key);
+    }
+  }
+}
+
+function cleanupLocalRateLimitStore(now: number, options?: { force?: boolean }) {
+  const shouldCleanup =
+    options?.force
+    || lastLocalRateLimitCleanupAt === 0
+    || now - lastLocalRateLimitCleanupAt >= LOCAL_RATE_LIMIT_CLEANUP_INTERVAL_MS;
+
+  if (!shouldCleanup) {
+    return;
+  }
+
+  pruneExpiredLocalBuckets(now);
+  lastLocalRateLimitCleanupAt = now;
+}
+
+function evictOldestLocalBucket() {
+  const oldestKey = localRateLimitStore.keys().next().value;
+  if (!oldestKey) {
+    return false;
+  }
+
+  localRateLimitStore.delete(oldestKey);
+  return true;
+}
+
+function ensureLocalRateLimitCapacity(now: number) {
+  if (localRateLimitStore.size < LOCAL_RATE_LIMIT_MAX_BUCKETS) {
+    return;
+  }
+
+  cleanupLocalRateLimitStore(now, { force: true });
+
+  if (localRateLimitStore.size < LOCAL_RATE_LIMIT_MAX_BUCKETS) {
+    return;
+  }
+
+  if (evictOldestLocalBucket()) {
+    console.warn("rate_limit_local_store_evicted_oldest_bucket", {
+      size: localRateLimitStore.size,
+      maxBuckets: LOCAL_RATE_LIMIT_MAX_BUCKETS,
+    });
+  }
+}
+
 function consumeLocalRateLimit(
   bucketKey: string,
   limit: number,
   windowMs: number,
 ): RateLimitResult {
   const now = Date.now();
-
-  for (const [key, value] of localRateLimitStore.entries()) {
-    if (value.expiresAt <= now) {
-      localRateLimitStore.delete(key);
-    }
-  }
+  cleanupLocalRateLimitStore(now);
 
   const existing = localRateLimitStore.get(bucketKey);
   if (!existing || existing.expiresAt <= now) {
+    ensureLocalRateLimitCapacity(now);
     localRateLimitStore.set(bucketKey, {
       hits: 1,
       expiresAt: now + windowMs,

@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { getCakePrices } from "@/lib/cakes-data";
+import { getCakeBuilderData } from "@/lib/cakes-data";
 
 export async function GET() {
   try {
-    const prices = await getCakePrices();
+    const { prices } = await getCakeBuilderData();
     return NextResponse.json({ prices });
   } catch (error) {
     console.error("cake_prices_failed", error instanceof Error ? error.message : "unknown");

@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { STORAGE_KEYS } from "@/lib/constants";
 import { formatDistanceKm, formatUGX } from "@/lib/format";
 import type { DeliveryQuote, DeliveryResolvedLocation } from "@/lib/delivery/types";
 import { checkoutSchema, type CheckoutSchemaInput } from "@/lib/validation";
@@ -16,6 +17,21 @@ import { checkoutSchema, type CheckoutSchemaInput } from "@/lib/validation";
 type CheckoutFormProps = {
   compact?: boolean;
 };
+
+function getOrCreateCheckoutSessionToken() {
+  if (typeof window === "undefined") {
+    return "";
+  }
+
+  const existingToken = window.localStorage.getItem(STORAGE_KEYS.checkoutSession)?.trim();
+  if (existingToken && existingToken.length >= 20) {
+    return existingToken;
+  }
+
+  const nextToken = crypto.randomUUID();
+  window.localStorage.setItem(STORAGE_KEYS.checkoutSession, nextToken);
+  return nextToken;
+}
 
 export function CheckoutForm({ compact = false }: CheckoutFormProps) {
   const router = useRouter();
@@ -109,6 +125,7 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
     setErrors({});
 
     const idempotencyKey = idempotencyKeyRef.current ?? crypto.randomUUID();
+    const checkoutSessionToken = getOrCreateCheckoutSessionToken();
     idempotencyKeyRef.current = idempotencyKey;
 
     try {
@@ -117,6 +134,7 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
         headers: {
           "Content-Type": "application/json",
           "Idempotency-Key": idempotencyKey,
+          "X-Checkout-Session": checkoutSessionToken,
         },
         body: JSON.stringify({
           customer: result.data,

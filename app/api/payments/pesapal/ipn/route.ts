@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { logSecurityEvent } from "@/lib/observability/security-events";
 import { syncPesapalPaymentForOrder } from "@/lib/payments/order-payments";
 import { enforceRateLimit } from "@/lib/rate-limit";
 
@@ -65,6 +66,17 @@ async function parseNotificationPayload(request: Request): Promise<PesapalNotifi
 async function handleNotification(request: Request) {
   const rateLimit = await enforceRateLimit(request, "payment-ipn", 180, 60_000);
   if (!rateLimit.allowed) {
+    logSecurityEvent({
+      event: "payment_ipn_rate_limited",
+      severity: "warning",
+      request,
+      details: {
+        retryAfterSeconds: rateLimit.retryAfterSeconds,
+      },
+      report: {
+        thresholds: [10, 25, 50],
+      },
+    });
     return tooManyRequests(rateLimit.retryAfterSeconds);
   }
 
@@ -79,6 +91,19 @@ async function handleNotification(request: Request) {
   });
 
   if (!orderId || !orderTrackingId) {
+    logSecurityEvent({
+      event: "payment_ipn_missing_identifiers",
+      severity: "warning",
+      request,
+      details: {
+        orderId: orderId ?? null,
+        orderTrackingId: orderTrackingId ?? null,
+        notificationType: payload.OrderNotificationType ?? null,
+      },
+      report: {
+        thresholds: [3, 10, 25],
+      },
+    });
     return NextResponse.json({ message: "Missing notification identifiers." }, { status: 400 });
   }
 
@@ -90,6 +115,16 @@ async function handleNotification(request: Request) {
       source: "ipn",
     });
   } catch (error) {
+    logSecurityEvent({
+      event: "payment_ipn_sync_failed",
+      severity: "error",
+      request,
+      details: {
+        orderId,
+        orderTrackingId,
+        error: error instanceof Error ? error.message : "unknown error",
+      },
+    });
     console.error("pesapal_ipn_sync_failed", {
       orderId,
       orderTrackingId,

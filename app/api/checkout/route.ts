@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { setOrderAccessCookie } from "@/lib/payments/order-access-cookie";
 import { verifyDeliveryQuoteToken } from "@/lib/delivery/quote-token";
+import { logSecurityEvent } from "@/lib/observability/security-events";
 import {
   getOrderAccessToken,
   getOrderPaymentSnapshot,
@@ -66,6 +67,7 @@ type CheckoutIdempotencyRow = {
   key: string;
   endpoint: string;
   request_hash: string;
+  client_binding_hash: string | null;
   resource_id: string | null;
   response_status: number | null;
   response_body: StoredCheckoutResponse | null;
@@ -139,6 +141,14 @@ function getIdempotencyKey(request: Request) {
   return key;
 }
 
+function getCheckoutSessionToken(request: Request) {
+  const token = request.headers.get("X-Checkout-Session")?.trim();
+  if (!token || token.length > 200) {
+    return null;
+  }
+  return token;
+}
+
 function stableSerialize(value: unknown): string {
   if (Array.isArray(value)) {
     return `[${value.map((entry) => stableSerialize(entry)).join(",")}]`;
@@ -159,6 +169,17 @@ function stableSerialize(value: unknown): string {
 
 function buildCheckoutRequestHash(payload: z.infer<typeof checkoutPayloadSchema>) {
   return createHash("sha256").update(stableSerialize(payload)).digest("hex");
+}
+
+function buildCheckoutSessionBindingHash(sessionToken: string) {
+  return createHash("sha256").update(sessionToken).digest("hex");
+}
+
+function hasMatchingCheckoutBinding(
+  row: CheckoutIdempotencyRow,
+  sessionBindingHash: string,
+) {
+  return row.client_binding_hash !== null && row.client_binding_hash === sessionBindingHash;
 }
 
 function buildInsufficientStockMessage(productName: string, stockQuantity: number) {
@@ -338,7 +359,7 @@ async function getStoredCheckoutAttempt(key: string) {
   const supabase = getSupabaseServerClient();
   const { data, error } = await supabase
     .from("api_idempotency_keys")
-    .select("key,endpoint,request_hash,resource_id,response_status,response_body")
+    .select("key,endpoint,request_hash,client_binding_hash,resource_id,response_status,response_body")
     .eq("key", key)
     .maybeSingle();
 
@@ -382,9 +403,31 @@ async function releaseCheckoutAttempt(key: string) {
 async function resumeCheckoutAttempt(
   row: CheckoutIdempotencyRow,
   requestOrigin: string,
+  sessionBindingHash: string,
+  request?: Request,
 ) {
   const timings: TimingEntry[] = [];
   const resumeStartedAt = startTiming();
+
+  if (!hasMatchingCheckoutBinding(row, sessionBindingHash)) {
+    if (request) {
+      logSecurityEvent({
+        event: "checkout_resume_binding_mismatch",
+        severity: "warning",
+        request,
+        details: {
+          idempotencyKey: row.key,
+          orderId: row.resource_id,
+        },
+        report: {
+          thresholds: [2, 5, 10],
+        },
+      });
+    }
+    return conflict(
+      "This checkout retry belongs to a different browser session. Please start a new checkout.",
+    );
+  }
 
   if (row.response_status !== null && row.response_body) {
     const response = NextResponse.json(row.response_body, { status: row.response_status });
@@ -487,6 +530,17 @@ export async function POST(request: Request) {
   const rateLimit = await enforceRateLimit(request, "checkout", 12, 60_000);
   recordTiming(timings, "checkout_rate_limit", rateLimitStartedAt);
   if (!rateLimit.allowed) {
+    logSecurityEvent({
+      event: "checkout_rate_limited",
+      severity: "warning",
+      request,
+      details: {
+        retryAfterSeconds: rateLimit.retryAfterSeconds,
+      },
+      report: {
+        thresholds: [5, 10, 25],
+      },
+    });
     const response = tooManyRequests(rateLimit.retryAfterSeconds);
     recordTiming(timings, "checkout_total", checkoutStartedAt);
     setServerTimingHeaders(response, timings);
@@ -497,6 +551,11 @@ export async function POST(request: Request) {
   if (!idempotencyKey) {
     return badRequest("Missing Idempotency-Key header");
   }
+  const checkoutSessionToken = getCheckoutSessionToken(request);
+  if (!checkoutSessionToken) {
+    return badRequest("Missing X-Checkout-Session header");
+  }
+  const sessionBindingHash = buildCheckoutSessionBindingHash(checkoutSessionToken);
 
   const parseBodyStartedAt = startTiming();
   const body = await request.json();
@@ -534,7 +593,7 @@ export async function POST(request: Request) {
       return conflict("Idempotency key cannot be reused with a different checkout payload.");
     }
 
-    return resumeCheckoutAttempt(existingAttempt.data, requestOrigin);
+    return resumeCheckoutAttempt(existingAttempt.data, requestOrigin, sessionBindingHash, request);
   }
 
   const canonicalItemsStartedAt = startTiming();
@@ -609,6 +668,7 @@ export async function POST(request: Request) {
     key: idempotencyKey,
     endpoint: "checkout",
     request_hash: requestHash,
+    client_binding_hash: sessionBindingHash,
     resource_id: orderId,
   });
   recordTiming(timings, "checkout_idempotency_reserve", reservationStartedAt);
@@ -631,7 +691,12 @@ export async function POST(request: Request) {
         return conflict("Idempotency key cannot be reused with a different checkout payload.");
       }
 
-      const response = await resumeCheckoutAttempt(retryAttempt.data, requestOrigin);
+      const response = await resumeCheckoutAttempt(
+        retryAttempt.data,
+        requestOrigin,
+        sessionBindingHash,
+        request,
+      );
       setServerTimingHeaders(response, timings);
       return response;
     }
@@ -692,7 +757,12 @@ export async function POST(request: Request) {
     console.error("checkout_place_guest_order_failed", error.message);
     const recoveredAttempt = await getStoredCheckoutAttempt(idempotencyKey);
     if (recoveredAttempt.data) {
-      const response = await resumeCheckoutAttempt(recoveredAttempt.data, requestOrigin);
+      const response = await resumeCheckoutAttempt(
+        recoveredAttempt.data,
+        requestOrigin,
+        sessionBindingHash,
+        request,
+      );
       setServerTimingHeaders(response, timings);
       return response;
     }

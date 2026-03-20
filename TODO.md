@@ -17,3 +17,9 @@
 - When the admin dashboard edit-product page is built, add an explicit `Unpublish` action there.
 - Product creation should not require a separate publish step; new products should default to published immediately.
 - Availability and stock should control whether a product can be bought, while unpublish should be a deliberate admin-only action.
+
+## Security Follow-Up
+
+- Before enabling DPO as a payment provider, patch `lib/payments/providers/dpo.ts` to stop deriving return URLs from `requestOrigin`.
+- Required hardening for any future DPO rollout: add explicit `DPO_REDIRECT_URL` and `DPO_BACK_URL` env vars, require them in production, and fail fast if they are missing.
+- Treat this as a blocker for turning on `PAYMENT_PROVIDER=dpo`.

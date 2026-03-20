@@ -1,6 +1,7 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
+import { logSecurityEvent } from "@/lib/observability/security-events";
 import { getPaymentProvider, parsePaymentProviderName, type PaymentProviderName } from "@/lib/payments/config";
 import {
   getPaymentGateway,
@@ -502,6 +503,25 @@ export async function syncOrderPaymentForOrder(
   const receivedAmount = typeof status.amount === "number" ? Math.round(status.amount) : null;
 
   if (status.paymentStatus === "paid" && receivedAmount !== expectedAmount) {
+    logSecurityEvent({
+      event: "payment_amount_mismatch",
+      severity: "error",
+      details: {
+        orderId: input.orderId,
+        provider: status.provider,
+        providerReference: status.providerReference,
+        source: input.source,
+        expectedAmount,
+        receivedAmount,
+        currency: status.currency ?? "UGX",
+        providerStatus: status.providerStatus,
+      },
+      report: {
+        key: `payment_amount_mismatch:${status.provider}`,
+        thresholds: [1, 3, 5],
+        windowMs: 60 * 60_000,
+      },
+    });
     console.error("payment_amount_mismatch", {
       orderId: input.orderId,
       provider: status.provider,

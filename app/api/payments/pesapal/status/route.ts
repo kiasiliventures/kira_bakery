@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getOrderAccessCookie } from "@/lib/payments/order-access-cookie";
+import { logSecurityEvent } from "@/lib/observability/security-events";
 import {
   getOrderPaymentSnapshot,
   isOrderAccessDeniedError,
@@ -16,6 +17,17 @@ function tooManyRequests(retryAfterSeconds: number) {
 export async function GET(request: Request) {
   const rateLimit = await enforceRateLimit(request, "payment-status", 18, 60_000);
   if (!rateLimit.allowed) {
+    logSecurityEvent({
+      event: "payment_status_rate_limited",
+      severity: "warning",
+      request,
+      details: {
+        retryAfterSeconds: rateLimit.retryAfterSeconds,
+      },
+      report: {
+        thresholds: [5, 10, 25],
+      },
+    });
     return tooManyRequests(rateLimit.retryAfterSeconds);
   }
 
@@ -29,6 +41,17 @@ export async function GET(request: Request) {
   }
   const accessToken = await getOrderAccessCookie(orderId);
   if (!accessToken) {
+    logSecurityEvent({
+      event: "payment_status_missing_access_session",
+      severity: "warning",
+      request,
+      details: {
+        orderId,
+      },
+      report: {
+        thresholds: [5, 10, 25],
+      },
+    });
     return NextResponse.json({ message: "Missing order access session." }, { status: 403 });
   }
 
@@ -48,6 +71,17 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: true, order: snapshot });
   } catch (error) {
     if (isOrderAccessDeniedError(error)) {
+      logSecurityEvent({
+        event: "payment_status_access_denied",
+        severity: "warning",
+        request,
+        details: {
+          orderId,
+        },
+        report: {
+          thresholds: [3, 5, 10],
+        },
+      });
       return NextResponse.json({ message: error.message }, { status: 403 });
     }
 

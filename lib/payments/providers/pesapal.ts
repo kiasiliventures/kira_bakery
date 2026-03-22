@@ -110,6 +110,110 @@ function getBaseUrl() {
   return getRequiredEnv("PESAPAL_BASE_URL").replace(/\/+$/, "");
 }
 
+function isPrivateOrLoopbackHostname(hostname: string) {
+  const normalized = hostname.trim().toLowerCase();
+  if (!normalized) {
+    return true;
+  }
+
+  if (
+    normalized === "localhost"
+    || normalized === "::1"
+    || normalized === "0.0.0.0"
+    || normalized.endsWith(".localhost")
+    || normalized.endsWith(".local")
+  ) {
+    return true;
+  }
+
+  const ipv4Match = normalized.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4Match) {
+    const octets = ipv4Match.slice(1).map((segment) => Number(segment));
+    if (octets.some((segment) => !Number.isInteger(segment) || segment < 0 || segment > 255)) {
+      return true;
+    }
+
+    const [first, second] = octets;
+    if (
+      first === 0
+      || first === 10
+      || first === 127
+      || (first === 169 && second === 254)
+      || (first === 172 && second >= 16 && second <= 31)
+      || (first === 192 && second === 168)
+    ) {
+      return true;
+    }
+  }
+
+  if (
+    normalized.startsWith("fc")
+    || normalized.startsWith("fd")
+    || normalized.startsWith("fe80:")
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function ensurePesapalPublicUrl(
+  urlValue: string,
+  envName: "PESAPAL_CALLBACK_URL" | "PESAPAL_IPN_URL",
+  options: { usedFallbackOrigin: boolean },
+) {
+  let parsed: URL;
+
+  try {
+    parsed = new URL(urlValue);
+  } catch {
+    throw new Error(`${envName} must be a valid absolute URL.`);
+  }
+
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    throw new Error(`${envName} must use http or https.`);
+  }
+
+  if (isPrivateOrLoopbackHostname(parsed.hostname)) {
+    if (options.usedFallbackOrigin) {
+      throw new Error(
+        `${envName} is not configured and Pesapal cannot use the request-origin fallback ${parsed.origin}. `
+        + `Set ${envName} to a public URL before initiating checkout.`,
+      );
+    }
+
+    throw new Error(
+      `${envName} must be a public URL. Pesapal cannot use ${parsed.origin}.`,
+    );
+  }
+
+  return parsed.toString();
+}
+
+function logPesapalEnvironmentWarning(requestOrigin?: string | null) {
+  if (!requestOrigin) {
+    return;
+  }
+
+  try {
+    const requestUrl = new URL(requestOrigin);
+    const baseUrl = getBaseUrl();
+
+    if (
+      !isPrivateOrLoopbackHostname(requestUrl.hostname)
+      && /:\/\/cybqa\.pesapal\.com\/pesapalv3\/?$/i.test(baseUrl)
+    ) {
+      console.warn("pesapal_environment_mismatch", {
+        requestOrigin: requestUrl.origin,
+        baseUrl,
+        message: "Public checkout is using the Pesapal sandbox base URL.",
+      });
+    }
+  } catch {
+    // Ignore malformed request origins here; URL validation happens elsewhere.
+  }
+}
+
 function buildRuntimeUrl(pathname: string, requestOrigin?: string | null) {
   if (requestOrigin) {
     return new URL(pathname, requestOrigin).toString();
@@ -134,14 +238,16 @@ function getConfiguredOrRuntimeUrl(
 ) {
   const configured = process.env[envName]?.trim();
   if (configured) {
-    return configured;
+    return ensurePesapalPublicUrl(configured, envName, { usedFallbackOrigin: false });
   }
 
   if (isProductionRuntime()) {
     throw new Error(`Missing required environment variable: ${envName}`);
   }
 
-  return buildRuntimeUrl(pathname, requestOrigin);
+  return ensurePesapalPublicUrl(buildRuntimeUrl(pathname, requestOrigin), envName, {
+    usedFallbackOrigin: true,
+  });
 }
 
 function getCallbackUrl(
@@ -195,6 +301,52 @@ function splitCustomerName(name: string) {
   return {
     firstName: parts.slice(0, -1).join(" "),
     lastName: parts.at(-1) ?? "Customer",
+  };
+}
+
+function normalizePesapalPhoneNumber(phone?: string | null) {
+  const trimmed = phone?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  return trimmed.replace(/\s+/g, "");
+}
+
+function normalizePesapalEmail(email?: string | null) {
+  const trimmed = email?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function validatePesapalSubmitInput(input: PesapalSubmitOrderInput) {
+  const orderId = input.orderId.trim();
+  if (!/^[A-Za-z0-9._:-]{1,50}$/.test(orderId)) {
+    throw new Error(
+      "Pesapal merchant reference must be 1-50 characters and use only letters, numbers, dots, dashes, underscores, or colons.",
+    );
+  }
+
+  const description = input.description.trim();
+  if (!description) {
+    throw new Error("Pesapal order description is required.");
+  }
+
+  if (description.length > 100) {
+    throw new Error("Pesapal order description must be 100 characters or fewer.");
+  }
+
+  const email = normalizePesapalEmail(input.email);
+  const phone = normalizePesapalPhoneNumber(input.phone);
+
+  if (!email && !phone) {
+    throw new Error("Pesapal requires either a customer email address or phone number.");
+  }
+
+  return {
+    orderId,
+    description,
+    email,
+    phone,
   };
 }
 
@@ -349,36 +501,49 @@ export async function ensurePesapalIpnId(requestOrigin?: string | null) {
 export async function submitPesapalOrderRequest(
   input: PesapalSubmitOrderInput,
 ): Promise<PesapalSubmitOrderResponse> {
+  const normalizedInput = validatePesapalSubmitInput(input);
+  logPesapalEnvironmentWarning(input.requestOrigin);
   const notificationId = await ensurePesapalIpnId(input.requestOrigin);
   const { firstName, lastName } = splitCustomerName(input.customerName);
+  const callbackUrl = getCallbackUrl(normalizedInput.orderId, input.requestOrigin);
+  const cancellationUrl = getCancellationUrl(normalizedInput.orderId, input.requestOrigin);
 
   const payload = {
-    id: input.orderId,
+    id: normalizedInput.orderId,
     currency: "UGX",
     amount: input.amountUGX,
-    description: input.description,
-    callback_url: getCallbackUrl(input.orderId, input.requestOrigin),
-    cancellation_url: getCancellationUrl(input.orderId, input.requestOrigin),
+    description: normalizedInput.description,
+    redirect_mode: "TOP_WINDOW",
+    callback_url: callbackUrl,
+    cancellation_url: cancellationUrl,
     notification_id: notificationId,
     billing_address: {
-      email_address: input.email ?? "",
-      phone_number: input.phone ?? "",
+      ...(normalizedInput.email ? { email_address: normalizedInput.email } : {}),
+      ...(normalizedInput.phone ? { phone_number: normalizedInput.phone } : {}),
       country_code: "UG",
       first_name: firstName,
+      middle_name: "",
       last_name: lastName,
       line_1: "Kira Bakery order",
+      line_2: "",
       city: "Kampala",
+      state: "",
+      postal_code: "",
+      zip_code: "",
     },
   };
 
   console.info("pesapal_submit_order_start", {
-    orderId: input.orderId,
+    orderId: normalizedInput.orderId,
     amountUGX: input.amountUGX,
     notificationId,
+    callbackUrl,
   });
   console.info("PESAPAL_SUBMIT", {
-    merchantReference: input.orderId,
+    merchantReference: normalizedInput.orderId,
     amount: input.amountUGX,
+    callbackUrl,
+    cancellationUrl,
   });
 
   const response = await pesapalRequest<PesapalSubmitOrderResponse>(
@@ -392,8 +557,14 @@ export async function submitPesapalOrderRequest(
 
   if (!response.order_tracking_id || !response.redirect_url) {
     console.error("pesapal_submit_order_failed", {
-      orderId: input.orderId,
-      error: response.error?.message ?? response.message ?? "missing tracking or redirect URL",
+      orderId: normalizedInput.orderId,
+      status: response.status ?? null,
+      message: response.message ?? null,
+      errorCode: response.error?.code ?? null,
+      errorType: response.error?.type ?? null,
+      errorMessage: response.error?.message ?? null,
+      callbackUrl,
+      cancellationUrl,
     });
     throw new Error(
       response.error?.message ?? response.message ?? "Pesapal order request did not return redirect details.",
@@ -401,7 +572,7 @@ export async function submitPesapalOrderRequest(
   }
 
   console.info("pesapal_submit_order_success", {
-    orderId: input.orderId,
+    orderId: normalizedInput.orderId,
     orderTrackingId: response.order_tracking_id,
   });
 

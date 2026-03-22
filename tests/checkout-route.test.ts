@@ -1,8 +1,6 @@
 import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const originalEnv = { ...process.env };
-
 const enforceRateLimitMock = vi.fn();
 const getSupabaseServerClientMock = vi.fn();
 const getOrderAccessTokenMock = vi.fn();
@@ -103,8 +101,6 @@ function buildSupabaseClient(existingAttempt: Record<string, unknown>) {
 
 describe("checkout route regression tests", () => {
   beforeEach(() => {
-    vi.resetModules();
-    process.env = { ...originalEnv };
     enforceRateLimitMock.mockResolvedValue({
       allowed: true,
       remaining: 10,
@@ -201,56 +197,6 @@ describe("checkout route regression tests", () => {
       paymentStatus: "pending",
     });
     expect(setOrderAccessCookieMock).toHaveBeenCalledTimes(1);
-    expect(setOrderAccessCookieMock).toHaveBeenCalledWith(
-      expect.anything(),
-      orderId,
-      "order-access-token",
-    );
-  });
-
-  it("allows a stored checkout retry without session binding when the March 20 hardening is muted", async () => {
-    process.env.MUTE_MARCH20_PAYMENT_SECURITY_HARDENING = "true";
-
-    const payload = buildValidPayload();
-    const idempotencyKey = "checkout-key-3";
-    const orderId = "4ecf46c0-17fe-4fba-8fe2-6b58a4c3409f";
-
-    getSupabaseServerClientMock.mockReturnValue(
-      buildSupabaseClient({
-        key: idempotencyKey,
-        endpoint: "checkout",
-        request_hash: buildCheckoutRequestHash(payload),
-        client_binding_hash: buildSessionBindingHash("different-session"),
-        resource_id: orderId,
-        response_status: 200,
-        response_body: {
-          ok: true,
-          id: orderId,
-          paymentStatus: "pending",
-        },
-      }),
-    );
-    getOrderAccessTokenMock.mockResolvedValue("order-access-token");
-
-    const { POST } = await import("@/app/api/checkout/route");
-
-    const response = await POST(
-      new Request("https://example.com/api/checkout", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Idempotency-Key": idempotencyKey,
-        },
-        body: JSON.stringify(payload),
-      }),
-    );
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({
-      ok: true,
-      id: orderId,
-      paymentStatus: "pending",
-    });
     expect(setOrderAccessCookieMock).toHaveBeenCalledWith(
       expect.anything(),
       orderId,

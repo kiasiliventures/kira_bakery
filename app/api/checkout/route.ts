@@ -4,7 +4,6 @@ import { z } from "zod";
 import { setOrderAccessCookie } from "@/lib/payments/order-access-cookie";
 import { verifyDeliveryQuoteToken } from "@/lib/delivery/quote-token";
 import { logSecurityEvent } from "@/lib/observability/security-events";
-import { isMarch20PaymentHardeningMuted } from "@/lib/payments/hardening-flags";
 import {
   getOrderAccessToken,
   getOrderPaymentSnapshot,
@@ -404,14 +403,13 @@ async function releaseCheckoutAttempt(key: string) {
 async function resumeCheckoutAttempt(
   row: CheckoutIdempotencyRow,
   requestOrigin: string,
-  sessionBindingHash: string | null,
+  sessionBindingHash: string,
   request?: Request,
 ) {
   const timings: TimingEntry[] = [];
   const resumeStartedAt = startTiming();
-  const march20HardeningMuted = isMarch20PaymentHardeningMuted();
 
-  if (!march20HardeningMuted && (!sessionBindingHash || !hasMatchingCheckoutBinding(row, sessionBindingHash))) {
+  if (!hasMatchingCheckoutBinding(row, sessionBindingHash)) {
     if (request) {
       logSecurityEvent({
         event: "checkout_resume_binding_mismatch",
@@ -528,7 +526,6 @@ export async function POST(request: Request) {
   const timings: TimingEntry[] = [];
   const checkoutStartedAt = startTiming();
   const requestOrigin = new URL(request.url).origin;
-  const march20HardeningMuted = isMarch20PaymentHardeningMuted();
   const rateLimitStartedAt = startTiming();
   const rateLimit = await enforceRateLimit(request, "checkout", 12, 60_000);
   recordTiming(timings, "checkout_rate_limit", rateLimitStartedAt);
@@ -554,13 +551,11 @@ export async function POST(request: Request) {
   if (!idempotencyKey) {
     return badRequest("Missing Idempotency-Key header");
   }
-  const checkoutSessionToken = march20HardeningMuted ? null : getCheckoutSessionToken(request);
-  if (!march20HardeningMuted && !checkoutSessionToken) {
+  const checkoutSessionToken = getCheckoutSessionToken(request);
+  if (!checkoutSessionToken) {
     return badRequest("Missing X-Checkout-Session header");
   }
-  const sessionBindingHash = checkoutSessionToken
-    ? buildCheckoutSessionBindingHash(checkoutSessionToken)
-    : null;
+  const sessionBindingHash = buildCheckoutSessionBindingHash(checkoutSessionToken);
 
   const parseBodyStartedAt = startTiming();
   const body = await request.json();

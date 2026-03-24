@@ -180,71 +180,72 @@ export function PaymentResultView() {
 
   return (
     <main className="mx-auto flex min-h-[70vh] w-full max-w-3xl flex-col justify-center px-6 py-16">
-      <div className="space-y-8">
-        <div>
-          <p className="text-sm uppercase tracking-[0.25em] text-badge-foreground">KiRA Bakery</p>
-          <h1 className="mt-3 font-serif text-4xl text-foreground">{title}</h1>
-          <p className="mt-4 max-w-2xl text-base leading-7 text-muted">
-            {isLoading ? "Verifying your payment with the backend..." : error ?? message}
-          </p>
-        </div>
-
-        {order && !isLoading && !error && (
-          <Card className="rounded-[28px] border-2 border-border/90 bg-surface-alt/35 shadow-[var(--shadow-modal)]">
-            <CardHeader className="gap-2 p-7 pb-4">
-              <CardTitle className="font-serif text-2xl">Order details</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3 p-7 pt-0 text-sm text-foreground">
-              <p>Order ID: {order.orderId}</p>
-              <p>Amount paid: {formatUGX(order.totalUGX)}</p>
-              <p>Payment status: {order.paymentStatus}</p>
-              <p>Order status: {order.orderStatus}</p>
-              <p>Verified with Pesapal: {order.verified ? "yes" : "no"}</p>
-              {order.items.length > 0 && (
-                <div className="pt-3">
-                  <p className="font-semibold text-foreground">Items ordered</p>
-                  <ul className="mt-2 space-y-2">
-                    {order.items.map((item, index) => (
-                      <li key={`${item.name}-${index}`} className="rounded-xl bg-surface px-4 py-3">
-                        <span className="font-medium">{item.quantity} x {item.name}</span>
-                        {(item.selectedSize || item.selectedFlavor) && (
-                          <span className="text-muted">
-                            {" "}
-                            {[
-                              item.selectedSize ? `Size: ${item.selectedSize}` : null,
-                              item.selectedFlavor ? `Flavor: ${item.selectedFlavor}` : null,
-                            ]
-                              .filter(Boolean)
-                              .join(" | ")}
-                          </span>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
+      <div className="space-y-6">
+        <Card className="rounded-[28px] border-2 border-accent/35 bg-surface shadow-[var(--shadow-modal)]">
+          <CardHeader className="gap-2 p-8 pb-5">
+            <p className="text-sm uppercase tracking-[0.25em] text-badge-foreground">KiRA Bakery</p>
+            <CardTitle className="mt-1 font-serif text-4xl text-foreground">{title}</CardTitle>
+            <p className="mt-3 max-w-2xl text-base leading-7 text-muted">
+              {isLoading ? "Verifying your payment with the backend..." : error ?? message}
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-6 p-8 pt-0">
+            {order && !isLoading && !error && (
+              <section className="rounded-2xl border border-accent/20 bg-surface-alt/45 p-6 text-sm text-foreground">
+                <h2 className="font-serif text-2xl text-foreground">Order details</h2>
+                <div className="mt-4 space-y-3">
+                  <p>Order ID: {order.orderId}</p>
+                  <p>Amount paid: {formatUGX(order.totalUGX)}</p>
+                  <p>Payment status: {order.paymentStatus}</p>
+                  <p>Order status: {order.orderStatus}</p>
+                  <p>Verified with Pesapal: {order.verified ? "yes" : "no"}</p>
                 </div>
-              )}
-            </CardContent>
-          </Card>
-        )}
+                {order.items.length > 0 && (
+                  <div className="pt-4">
+                    <p className="font-semibold text-foreground">Items ordered</p>
+                    <ul className="mt-2 space-y-2">
+                      {order.items.map((item, index) => (
+                        <li key={`${item.name}-${index}`} className="rounded-xl bg-surface px-4 py-3">
+                          <span className="font-medium">{item.quantity} x {item.name}</span>
+                          {(item.selectedSize || item.selectedFlavor) && (
+                            <span className="text-muted">
+                              {" "}
+                              {[
+                                item.selectedSize ? `Size: ${item.selectedSize}` : null,
+                                item.selectedFlavor ? `Flavor: ${item.selectedFlavor}` : null,
+                              ]
+                                .filter(Boolean)
+                                .join(" | ")}
+                            </span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </section>
+            )}
 
-        <div className="flex flex-wrap gap-3">
-          <Button
-            type="button"
-            onClick={() => {
-              setPollAttempts(0);
-              setRequestSequence((current) => current + 1);
-            }}
-            disabled={!orderId || isLoading}
-          >
-            Check Status
-          </Button>
-          <Button type="button" variant="outline" onClick={() => window.location.assign("/cart")}>
-            Back to Cart
-          </Button>
-          <Button type="button" variant="ghost" onClick={() => window.location.assign("/menu")}>
-            Browse Menu
-          </Button>
-        </div>
+            <div className="flex flex-wrap gap-3">
+              <Button
+                type="button"
+                onClick={() => {
+                  setPollAttempts(0);
+                  setRequestSequence((current) => current + 1);
+                }}
+                disabled={!orderId || isLoading}
+              >
+                Check Status
+              </Button>
+              <Button type="button" variant="outline" onClick={() => window.location.assign("/cart")}>
+                Back to Cart
+              </Button>
+              <Button type="button" variant="ghost" onClick={() => window.location.assign("/menu")}>
+                Browse Menu
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
 
         {showReviewPrompt && <OrderReviewPrompt />}
       </div>

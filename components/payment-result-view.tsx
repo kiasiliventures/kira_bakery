@@ -31,6 +31,8 @@ type PaymentStatusResponse = {
 
 const POLL_INTERVAL_MS = 10_000;
 const MAX_POLL_ATTEMPTS = 5;
+const REVIEWABLE_ORDER_STATUSES = new Set(["paid", "ready", "completed"]);
+const BLOCKED_PAYMENT_STATUSES = new Set(["failed", "payment_failed", "cancelled", "canceled"]);
 
 function getTitle(viewState: PaymentResultOrder["viewState"] | null) {
   if (viewState === "success") return "Payment confirmed";
@@ -61,10 +63,14 @@ function shouldShowReviewPrompt(order: PaymentResultOrder | null) {
     return false;
   }
 
-  return (
-    order.paymentStatus.trim().toLowerCase() === "paid"
-    && order.orderStatus.trim().toLowerCase() === "confirmed"
-  );
+  const normalizedPaymentStatus = order.paymentStatus.trim().toLowerCase();
+  const normalizedOrderStatus = order.orderStatus.trim().toLowerCase();
+
+  if (BLOCKED_PAYMENT_STATUSES.has(normalizedPaymentStatus)) {
+    return false;
+  }
+
+  return REVIEWABLE_ORDER_STATUSES.has(normalizedOrderStatus);
 }
 
 export function PaymentResultView() {

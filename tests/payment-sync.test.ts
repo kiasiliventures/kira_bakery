@@ -149,4 +149,41 @@ describe("payment sync regression tests", () => {
       }),
     );
   });
+
+  it("returns the canonical order_status in the payment snapshot", async () => {
+    const orderRow: MockOrderRow = {
+      id: "7aa4d2cc-7ba8-4cc0-b856-a7921a4fb7bf",
+      order_access_token: "access-token",
+      total_ugx: 120000,
+      total_price: 120000,
+      status: "Pending",
+      order_status: "confirmed",
+      customer_name: "Jane Doe",
+      customer_phone: "+256700000000",
+      phone: "+256700000000",
+      customer_email: "jane@example.com",
+      email: "jane@example.com",
+      payment_status: "paid",
+      payment_provider: "pesapal",
+      payment_reference: null,
+      payment_redirect_url: "https://payments.example.com",
+      paid_at: null,
+      order_tracking_id: "tracking-123",
+      created_at: new Date().toISOString(),
+      order_items: [],
+    };
+
+    const supabase = buildSupabaseClient(orderRow);
+    getSupabaseServerClientMock.mockReturnValue(supabase.client);
+
+    const { getOrderPaymentSnapshot } = await import("@/lib/payments/order-payments");
+
+    await expect(getOrderPaymentSnapshot(orderRow.id)).resolves.toEqual(
+      expect.objectContaining({
+        orderStatus: "confirmed",
+        paymentStatus: "paid",
+        viewState: "success",
+      }),
+    );
+  });
 });

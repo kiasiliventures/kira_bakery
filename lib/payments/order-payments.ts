@@ -195,7 +195,7 @@ function buildSnapshot(
   return {
     orderId: row.id,
     customerName: row.customer_name,
-    orderStatus: row.status,
+    orderStatus: row.order_status ?? row.status,
     totalUGX: row.total_ugx,
     paymentStatus,
     viewState: mapViewState(paymentStatus, options?.hint),

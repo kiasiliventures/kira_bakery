@@ -3,12 +3,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useCart } from "@/components/providers/app-provider";
+import { OrderReviewPrompt } from "@/components/order-review-prompt";
 import { Button } from "@/components/ui/button";
 import { formatUGX } from "@/lib/format";
 
 type PaymentResultOrder = {
   orderId: string;
   customerName: string;
+  orderStatus: string;
   totalUGX: number;
   paymentStatus: string;
   viewState: "success" | "failed" | "cancelled" | "pending";
@@ -52,6 +54,17 @@ function getMessage(order: PaymentResultOrder | null) {
     return "The payment was cancelled or abandoned. Your order remains unpaid and stock is untouched.";
   }
   return "We have not verified a successful payment yet. You can refresh this page in a moment.";
+}
+
+function shouldShowReviewPrompt(order: PaymentResultOrder | null) {
+  if (!order) {
+    return false;
+  }
+
+  return (
+    order.paymentStatus.trim().toLowerCase() === "paid"
+    && order.orderStatus.trim().toLowerCase() === "confirmed"
+  );
 }
 
 export function PaymentResultView() {
@@ -128,6 +141,7 @@ export function PaymentResultView() {
   const order = payload?.order ?? null;
   const title = getTitle(order?.viewState ?? null);
   const message = getMessage(order);
+  const showReviewPrompt = !isLoading && !error && shouldShowReviewPrompt(order);
 
   useEffect(() => {
     if (order?.viewState !== "success" || hasClearedCartRef.current) {
@@ -165,12 +179,14 @@ export function PaymentResultView() {
         <p className="mt-4 text-base leading-7 text-muted">
           {isLoading ? "Verifying your payment with the backend..." : error ?? message}
         </p>
+        {showReviewPrompt && <OrderReviewPrompt />}
 
         {order && !isLoading && !error && (
           <div className="mt-6 space-y-2 rounded-2xl bg-surface-alt p-5 text-sm text-foreground">
             <p>Order ID: {order.orderId}</p>
             <p>Amount paid: {formatUGX(order.totalUGX)}</p>
             <p>Payment status: {order.paymentStatus}</p>
+            <p>Order status: {order.orderStatus}</p>
             <p>Verified with Pesapal: {order.verified ? "yes" : "no"}</p>
             {order.items.length > 0 && (
               <div className="pt-2">

@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { useCart } from "@/components/providers/app-provider";
 import { OrderReviewPrompt } from "@/components/order-review-prompt";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatUGX } from "@/lib/format";
 
 type PaymentResultOrder = {
@@ -47,7 +48,7 @@ function getMessage(order: PaymentResultOrder | null) {
   }
 
   if (order.viewState === "success") {
-    return `Hi ${order.customerName}, we’ve confirmed your payment and your order is now moving ahead.`;
+    return `Hi ${order.customerName}, we've confirmed your payment and your order is now moving ahead.`;
   }
   if (order.viewState === "failed") {
     return "Pesapal reported the transaction as failed. Your stock remains untouched.";
@@ -179,48 +180,54 @@ export function PaymentResultView() {
 
   return (
     <main className="mx-auto flex min-h-[70vh] w-full max-w-3xl flex-col justify-center px-6 py-16">
-      <div className="rounded-[28px] border border-border bg-surface p-8 shadow-[var(--shadow-modal)]">
-        <p className="text-sm uppercase tracking-[0.25em] text-badge-foreground">KiRA Bakery</p>
-        <h1 className="mt-3 font-serif text-4xl text-foreground">{title}</h1>
-        <p className="mt-4 text-base leading-7 text-muted">
-          {isLoading ? "Verifying your payment with the backend..." : error ?? message}
-        </p>
-        {showReviewPrompt && <OrderReviewPrompt />}
+      <div className="space-y-8">
+        <div>
+          <p className="text-sm uppercase tracking-[0.25em] text-badge-foreground">KiRA Bakery</p>
+          <h1 className="mt-3 font-serif text-4xl text-foreground">{title}</h1>
+          <p className="mt-4 max-w-2xl text-base leading-7 text-muted">
+            {isLoading ? "Verifying your payment with the backend..." : error ?? message}
+          </p>
+        </div>
 
         {order && !isLoading && !error && (
-          <div className="mt-6 space-y-2 rounded-2xl bg-surface-alt p-5 text-sm text-foreground">
-            <p>Order ID: {order.orderId}</p>
-            <p>Amount paid: {formatUGX(order.totalUGX)}</p>
-            <p>Payment status: {order.paymentStatus}</p>
-            <p>Order status: {order.orderStatus}</p>
-            <p>Verified with Pesapal: {order.verified ? "yes" : "no"}</p>
-            {order.items.length > 0 && (
-              <div className="pt-2">
-                <p className="font-semibold text-foreground">Items ordered</p>
-                <ul className="mt-2 space-y-2">
-                  {order.items.map((item, index) => (
-                    <li key={`${item.name}-${index}`} className="rounded-xl bg-surface px-3 py-2">
-                      <span className="font-medium">{item.quantity} x {item.name}</span>
-                      {(item.selectedSize || item.selectedFlavor) && (
-                        <span className="text-muted">
-                          {" "}
-                          {[
-                            item.selectedSize ? `Size: ${item.selectedSize}` : null,
-                            item.selectedFlavor ? `Flavor: ${item.selectedFlavor}` : null,
-                          ]
-                            .filter(Boolean)
-                            .join(" • ")}
-                        </span>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
+          <Card className="rounded-[28px] shadow-[var(--shadow-modal)]">
+            <CardHeader className="pb-4">
+              <CardTitle className="font-serif text-2xl">Order details</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm text-foreground">
+              <p>Order ID: {order.orderId}</p>
+              <p>Amount paid: {formatUGX(order.totalUGX)}</p>
+              <p>Payment status: {order.paymentStatus}</p>
+              <p>Order status: {order.orderStatus}</p>
+              <p>Verified with Pesapal: {order.verified ? "yes" : "no"}</p>
+              {order.items.length > 0 && (
+                <div className="pt-2">
+                  <p className="font-semibold text-foreground">Items ordered</p>
+                  <ul className="mt-2 space-y-2">
+                    {order.items.map((item, index) => (
+                      <li key={`${item.name}-${index}`} className="rounded-xl bg-surface-alt px-3 py-2">
+                        <span className="font-medium">{item.quantity} x {item.name}</span>
+                        {(item.selectedSize || item.selectedFlavor) && (
+                          <span className="text-muted">
+                            {" "}
+                            {[
+                              item.selectedSize ? `Size: ${item.selectedSize}` : null,
+                              item.selectedFlavor ? `Flavor: ${item.selectedFlavor}` : null,
+                            ]
+                              .filter(Boolean)
+                              .join(" | ")}
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         )}
 
-        <div className="mt-8 flex flex-wrap gap-3">
+        <div className="flex flex-wrap gap-3">
           <Button
             type="button"
             onClick={() => {
@@ -238,6 +245,8 @@ export function PaymentResultView() {
             Browse Menu
           </Button>
         </div>
+
+        {showReviewPrompt && <OrderReviewPrompt />}
       </div>
     </main>
   );

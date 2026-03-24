@@ -190,22 +190,22 @@ export function PaymentResultView() {
         </div>
 
         {order && !isLoading && !error && (
-          <Card className="rounded-[28px] shadow-[var(--shadow-modal)]">
-            <CardHeader className="pb-4">
+          <Card className="rounded-[28px] border-2 border-border/90 bg-surface-alt/35 shadow-[var(--shadow-modal)]">
+            <CardHeader className="gap-2 p-7 pb-4">
               <CardTitle className="font-serif text-2xl">Order details</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-2 text-sm text-foreground">
+            <CardContent className="space-y-3 p-7 pt-0 text-sm text-foreground">
               <p>Order ID: {order.orderId}</p>
               <p>Amount paid: {formatUGX(order.totalUGX)}</p>
               <p>Payment status: {order.paymentStatus}</p>
               <p>Order status: {order.orderStatus}</p>
               <p>Verified with Pesapal: {order.verified ? "yes" : "no"}</p>
               {order.items.length > 0 && (
-                <div className="pt-2">
+                <div className="pt-3">
                   <p className="font-semibold text-foreground">Items ordered</p>
                   <ul className="mt-2 space-y-2">
                     {order.items.map((item, index) => (
-                      <li key={`${item.name}-${index}`} className="rounded-xl bg-surface-alt px-3 py-2">
+                      <li key={`${item.name}-${index}`} className="rounded-xl bg-surface px-4 py-3">
                         <span className="font-medium">{item.quantity} x {item.name}</span>
                         {(item.selectedSize || item.selectedFlavor) && (
                           <span className="text-muted">

@@ -150,7 +150,7 @@ describe("payment sync regression tests", () => {
     );
   });
 
-  it("returns the canonical order_status in the payment snapshot", async () => {
+  it("returns the canonical lifecycle label in the payment snapshot", async () => {
     const orderRow: MockOrderRow = {
       id: "7aa4d2cc-7ba8-4cc0-b856-a7921a4fb7bf",
       order_access_token: "access-token",
@@ -180,7 +180,7 @@ describe("payment sync regression tests", () => {
 
     await expect(getOrderPaymentSnapshot(orderRow.id)).resolves.toEqual(
       expect.objectContaining({
-        orderStatus: "confirmed",
+        orderStatus: "Paid",
         paymentStatus: "paid",
         viewState: "success",
       }),

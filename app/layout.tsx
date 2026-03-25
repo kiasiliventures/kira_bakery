@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Analytics } from "@vercel/analytics/react";
+import { AuthProvider } from "@/components/providers/auth-provider";
 import { AppProvider } from "@/components/providers/app-provider";
 import { PwaRegister } from "@/components/pwa-register";
 import { SiteFooter } from "@/components/site-footer";
@@ -88,13 +89,15 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
       <body className="min-h-screen bg-background text-foreground antialiased">
-        <AppProvider>
-          <PwaRegister />
-          <SiteHeader />
-          <main className="mx-auto w-full max-w-6xl px-4 py-8">{children}</main>
-          <SiteFooter />
-          <Analytics />
-        </AppProvider>
+        <AuthProvider>
+          <AppProvider>
+            <PwaRegister />
+            <SiteHeader />
+            <main className="mx-auto w-full max-w-6xl px-4 py-8">{children}</main>
+            <SiteFooter />
+            <Analytics />
+          </AppProvider>
+        </AuthProvider>
       </body>
     </html>
   );

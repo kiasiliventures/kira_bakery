@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const enforceRateLimitMock = vi.fn();
 const getSupabaseServerClientMock = vi.fn();
+const getAuthenticatedUserMock = vi.fn();
 const getOrderAccessTokenMock = vi.fn();
 const setOrderAccessCookieMock = vi.fn();
 
@@ -12,6 +13,7 @@ vi.mock("@/lib/rate-limit", () => ({
 
 vi.mock("@/lib/supabase/server", () => ({
   getSupabaseServerClient: getSupabaseServerClientMock,
+  getAuthenticatedUser: getAuthenticatedUserMock,
 }));
 
 vi.mock("@/lib/payments/order-payments", () => ({
@@ -106,6 +108,7 @@ describe("checkout route regression tests", () => {
       remaining: 10,
       retryAfterSeconds: 60,
     });
+    getAuthenticatedUserMock.mockResolvedValue(null);
     setOrderAccessCookieMock.mockReset();
     getOrderAccessTokenMock.mockReset();
   });

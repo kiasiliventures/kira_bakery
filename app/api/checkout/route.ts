@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { ensureCustomerForUser } from "@/lib/customers";
 import { setOrderAccessCookie } from "@/lib/payments/order-access-cookie";
 import { verifyDeliveryQuoteToken } from "@/lib/delivery/quote-token";
 import { logSecurityEvent } from "@/lib/observability/security-events";
@@ -10,7 +11,7 @@ import {
   initiateOrderPaymentForOrder,
 } from "@/lib/payments/order-payments";
 import { enforceRateLimit } from "@/lib/rate-limit";
-import { getSupabaseServerClient } from "@/lib/supabase/server";
+import { getAuthenticatedUser, getSupabaseServerClient } from "@/lib/supabase/server";
 import { checkoutSchema } from "@/lib/validation";
 
 type SharedCheckoutProductRow = {
@@ -76,6 +77,39 @@ type CheckoutIdempotencyRow = {
 type TimingEntry = {
   name: string;
   durationMs: number;
+};
+
+type SharedPlaceOrderPayload = {
+  order_id: string;
+  order_access_token: string;
+  order_total_ugx: number;
+  order_fulfillment_method: "delivery" | "pickup";
+  order_customer_name: string;
+  order_phone: string;
+  order_email: string;
+  order_delivery_address_text: string;
+  order_delivery_date: string | null;
+  order_notes: string;
+  order_delivery_place_id: string | null;
+  order_delivery_latitude: number | null;
+  order_delivery_longitude: number | null;
+  order_delivery_distance_km: number | null;
+  order_delivery_fee: number;
+  order_delivery_pricing_config_id: string | null;
+  order_delivery_store_location_id: string | null;
+  order_items: Array<{
+    product_id: string | null;
+    name: string;
+    image: string;
+    price_ugx: number;
+    quantity: number;
+    selected_size: string | null;
+    selected_flavor: string | null;
+  }>;
+};
+
+type GuestPlaceOrderRpcPayload = SharedPlaceOrderPayload & {
+  order_status: "Pending";
 };
 
 const checkoutPayloadSchema = z.object({
@@ -190,6 +224,69 @@ function buildInsufficientStockMessage(productName: string, stockQuantity: numbe
   return `Only ${stockQuantity} piece${stockQuantity === 1 ? "" : "s"} of ${productName} ${
     stockQuantity === 1 ? "is" : "are"
   } left.`;
+}
+
+function buildPlaceOrderRpcPayload(input: {
+  orderId: string;
+  orderAccessToken: string;
+  totalUGX: number;
+  customer: z.infer<typeof checkoutSchema>;
+  deliveryQuote: {
+    destination: {
+      addressText: string;
+      placeId: string;
+      latitude: number;
+      longitude: number;
+    };
+    distanceKm: number;
+    deliveryFee: number;
+    pricingConfigId: string;
+    storeLocationId: string;
+  } | null;
+  items: CanonicalCheckoutItem[];
+}): SharedPlaceOrderPayload {
+  const { customer, deliveryQuote, items } = input;
+
+  return {
+    order_id: input.orderId,
+    order_access_token: input.orderAccessToken,
+    order_total_ugx: input.totalUGX,
+    order_fulfillment_method: customer.deliveryMethod,
+    order_customer_name: customer.customerName,
+    order_phone: customer.phone,
+    order_email: customer.email || "",
+    order_delivery_address_text:
+      customer.deliveryMethod === "delivery"
+        ? deliveryQuote?.destination.addressText ?? customer.address ?? ""
+        : "",
+    order_delivery_date: customer.deliveryDate || null,
+    order_notes: customer.notes || "",
+    order_delivery_place_id:
+      customer.deliveryMethod === "delivery"
+        ? deliveryQuote?.destination.placeId ?? customer.deliveryLocation?.placeId ?? null
+        : null,
+    order_delivery_latitude:
+      customer.deliveryMethod === "delivery" ? deliveryQuote?.destination.latitude ?? null : null,
+    order_delivery_longitude:
+      customer.deliveryMethod === "delivery" ? deliveryQuote?.destination.longitude ?? null : null,
+    order_delivery_distance_km:
+      customer.deliveryMethod === "delivery" ? deliveryQuote?.distanceKm ?? null : null,
+    order_delivery_fee:
+      customer.deliveryMethod === "delivery" ? deliveryQuote?.deliveryFee ?? 0 : 0,
+    order_delivery_pricing_config_id:
+      customer.deliveryMethod === "delivery" ? deliveryQuote?.pricingConfigId ?? null : null,
+    order_delivery_store_location_id:
+      customer.deliveryMethod === "delivery" ? deliveryQuote?.storeLocationId ?? null : null,
+    order_items: items.map((item) => ({
+      product_id: item.productId || null,
+      name: item.name,
+      image: item.image,
+      price_ugx: item.priceUGX,
+      quantity: item.quantity,
+      selected_size: item.selectedSize ?? null,
+      selected_flavor: item.selectedFlavor ?? null,
+    })),
+  };
 }
 
 function selectLegacyVariant(
@@ -709,48 +806,36 @@ export async function POST(request: Request) {
   }
 
   const { customer } = parsed.data;
+  const authenticatedUser = await getAuthenticatedUser();
+  const authenticatedCustomer = authenticatedUser
+    ? await ensureCustomerForUser(authenticatedUser, {
+        checkoutName: customer.customerName,
+        phone: customer.phone,
+        defaultAddress:
+          customer.deliveryMethod === "delivery"
+            ? deliveryQuote?.destination.addressText ?? customer.address ?? null
+            : null,
+      })
+    : null;
   const placeOrderStartedAt = startTiming();
-  const { error } = await supabase.rpc("place_guest_order", {
-    order_id: orderId,
-    order_access_token: orderAccessToken,
-    order_total_ugx: totalUGX,
-    order_status: "Pending",
-    order_fulfillment_method: customer.deliveryMethod,
-    order_customer_name: customer.customerName,
-    order_phone: customer.phone,
-    order_email: customer.email || "",
-    order_delivery_address_text:
-      customer.deliveryMethod === "delivery"
-        ? deliveryQuote?.destination.addressText ?? customer.address ?? ""
-        : "",
-    order_delivery_date: customer.deliveryDate || null,
-    order_notes: customer.notes || "",
-    order_delivery_place_id:
-      customer.deliveryMethod === "delivery"
-        ? deliveryQuote?.destination.placeId ?? customer.deliveryLocation?.placeId ?? null
-        : null,
-    order_delivery_latitude:
-      customer.deliveryMethod === "delivery" ? deliveryQuote?.destination.latitude ?? null : null,
-    order_delivery_longitude:
-      customer.deliveryMethod === "delivery" ? deliveryQuote?.destination.longitude ?? null : null,
-    order_delivery_distance_km:
-      customer.deliveryMethod === "delivery" ? deliveryQuote?.distanceKm ?? null : null,
-    order_delivery_fee:
-      customer.deliveryMethod === "delivery" ? deliveryQuote?.deliveryFee ?? 0 : 0,
-    order_delivery_pricing_config_id:
-      customer.deliveryMethod === "delivery" ? deliveryQuote?.pricingConfigId ?? null : null,
-    order_delivery_store_location_id:
-      customer.deliveryMethod === "delivery" ? deliveryQuote?.storeLocationId ?? null : null,
-    order_items: items.map((item) => ({
-      product_id: item.productId || null,
-      name: item.name,
-      image: item.image,
-      price_ugx: item.priceUGX,
-      quantity: item.quantity,
-      selected_size: item.selectedSize ?? null,
-      selected_flavor: item.selectedFlavor ?? null,
-    })),
+  const placeOrderPayload = buildPlaceOrderRpcPayload({
+    orderId,
+    orderAccessToken,
+    totalUGX,
+    customer,
+    deliveryQuote,
+    items,
   });
+  const guestPlaceOrderPayload: GuestPlaceOrderRpcPayload = {
+    ...placeOrderPayload,
+    order_status: "Pending",
+  };
+  const { error } = authenticatedCustomer
+    ? await supabase.rpc("place_authenticated_order", {
+        order_customer_id: authenticatedCustomer.id,
+        ...placeOrderPayload,
+      })
+    : await supabase.rpc("place_guest_order", guestPlaceOrderPayload);
   recordTiming(timings, "checkout_place_order", placeOrderStartedAt);
 
   if (error) {

@@ -1,4 +1,10 @@
-export type OrderStatus = "Pending" | "In Progress" | "Ready" | "Delivered";
+export type OrderStatus =
+  | "Pending Payment"
+  | "Paid"
+  | "Ready"
+  | "Completed"
+  | "Payment Failed"
+  | "Cancelled";
 
 export type CartItem = {
   productId: string;

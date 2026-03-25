@@ -2,6 +2,7 @@ import "server-only";
 
 import { unstable_cache } from "next/cache";
 import { logSecurityEvent } from "@/lib/observability/security-events";
+import { normalizeOrderStatusLabel } from "@/lib/orders/status";
 import { getPaymentProvider, parsePaymentProviderName, type PaymentProviderName } from "@/lib/payments/config";
 import {
   getPaymentGateway,
@@ -195,7 +196,7 @@ function buildSnapshot(
   return {
     orderId: row.id,
     customerName: row.customer_name,
-    orderStatus: row.order_status ?? row.status,
+    orderStatus: normalizeOrderStatusLabel(row.order_status ?? row.status, row.payment_status),
     totalUGX: row.total_ugx,
     paymentStatus,
     viewState: mapViewState(paymentStatus, options?.hint),

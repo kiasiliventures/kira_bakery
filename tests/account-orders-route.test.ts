@@ -35,10 +35,6 @@ describe("account orders route", () => {
       id: "customer-123",
       email: "customer@example.com",
     });
-    ensureCustomerForUserMock.mockResolvedValue({
-      id: "customer-123",
-      email: "customer@example.com",
-    });
     getCustomerOrdersMock.mockResolvedValue([
       {
         id: "order-1",

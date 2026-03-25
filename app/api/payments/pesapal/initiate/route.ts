@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { validateSameOriginMutation } from "@/lib/http/same-origin";
 import { getOrderAccessCookie } from "@/lib/payments/order-access-cookie";
 import { logSecurityEvent } from "@/lib/observability/security-events";
 import {
@@ -15,6 +16,11 @@ function tooManyRequests(retryAfterSeconds: number) {
 }
 
 export async function POST(request: Request) {
+  const sameOriginViolation = validateSameOriginMutation(request);
+  if (sameOriginViolation) {
+    return sameOriginViolation;
+  }
+
   const rateLimit = await enforceRateLimit(request, "payment-initiate", 6, 60_000);
   if (!rateLimit.allowed) {
     logSecurityEvent({

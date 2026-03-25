@@ -4,6 +4,7 @@ import { z } from "zod";
 import { ensureCustomerForUser } from "@/lib/customers";
 import { setOrderAccessCookie } from "@/lib/payments/order-access-cookie";
 import { verifyDeliveryQuoteToken } from "@/lib/delivery/quote-token";
+import { validateSameOriginMutation } from "@/lib/http/same-origin";
 import { logSecurityEvent } from "@/lib/observability/security-events";
 import {
   getOrderAccessToken,
@@ -620,6 +621,11 @@ async function resumeCheckoutAttempt(
 }
 
 export async function POST(request: Request) {
+  const sameOriginViolation = validateSameOriginMutation(request);
+  if (sameOriginViolation) {
+    return sameOriginViolation;
+  }
+
   const timings: TimingEntry[] = [];
   const checkoutStartedAt = startTiming();
   const requestOrigin = new URL(request.url).origin;

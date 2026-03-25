@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isDeliveryError } from "@/lib/delivery/errors";
 import { quoteDelivery } from "@/lib/delivery/service";
+import { validateSameOriginMutation } from "@/lib/http/same-origin";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { deliveryQuoteRequestSchema } from "@/lib/validation";
 
@@ -12,6 +13,11 @@ function tooManyRequests(retryAfterSeconds: number) {
 }
 
 export async function POST(request: Request) {
+  const sameOriginViolation = validateSameOriginMutation(request);
+  if (sameOriginViolation) {
+    return sameOriginViolation;
+  }
+
   const rateLimit = await enforceRateLimit(request, "delivery-quote", 20, 60_000);
   if (!rateLimit.allowed) {
     return tooManyRequests(rateLimit.retryAfterSeconds);

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { cakeRequestSchema } from "@/lib/cakes";
 import { createCakeCustomRequest, getCakePrices } from "@/lib/cakes-data";
+import { validateSameOriginMutation } from "@/lib/http/same-origin";
 import { enforceRateLimit } from "@/lib/rate-limit";
 
 function tooManyRequests(retryAfterSeconds: number) {
@@ -12,6 +13,11 @@ function tooManyRequests(retryAfterSeconds: number) {
 
 export async function POST(request: Request) {
   try {
+    const sameOriginViolation = validateSameOriginMutation(request);
+    if (sameOriginViolation) {
+      return sameOriginViolation;
+    }
+
     const rateLimit = await enforceRateLimit(request, "cake-custom-request", 10, 15 * 60_000);
     if (!rateLimit.allowed) {
       return tooManyRequests(rateLimit.retryAfterSeconds);

@@ -144,6 +144,7 @@ describe("checkout route regression tests", () => {
           "Content-Type": "application/json",
           "Idempotency-Key": idempotencyKey,
           "X-Checkout-Session": replaySessionToken,
+          Origin: "https://example.com",
         },
         body: JSON.stringify(payload),
       }),
@@ -188,6 +189,7 @@ describe("checkout route regression tests", () => {
           "Content-Type": "application/json",
           "Idempotency-Key": idempotencyKey,
           "X-Checkout-Session": sessionToken,
+          Origin: "https://example.com",
         },
         body: JSON.stringify(payload),
       }),
@@ -205,5 +207,31 @@ describe("checkout route regression tests", () => {
       orderId,
       "order-access-token",
     );
+  });
+
+  it("rejects cross-site checkout requests before processing", async () => {
+    const payload = buildValidPayload();
+
+    const { POST } = await import("@/app/api/checkout/route");
+
+    const response = await POST(
+      new Request("https://example.com/api/checkout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": "checkout-key-3",
+          "X-Checkout-Session": "session-token",
+          Origin: "https://evil.example",
+        },
+        body: JSON.stringify(payload),
+      }),
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      message: "Cross-site mutation request rejected.",
+    });
+    expect(getSupabaseServerClientMock).not.toHaveBeenCalled();
+    expect(setOrderAccessCookieMock).not.toHaveBeenCalled();
   });
 });

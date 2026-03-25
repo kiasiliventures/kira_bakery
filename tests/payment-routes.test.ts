@@ -55,6 +55,7 @@ describe("payment route regression tests", () => {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          Origin: "https://example.com",
         },
         body: JSON.stringify({
           orderId: "order-123",
@@ -65,6 +66,29 @@ describe("payment route regression tests", () => {
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toEqual({
       message: "Missing order access session.",
+    });
+    expect(initiateOrderPaymentForOrderMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects cross-site payment initiation requests", async () => {
+    const { POST } = await import("@/app/api/payments/pesapal/initiate/route");
+
+    const response = await POST(
+      new Request("https://example.com/api/payments/pesapal/initiate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Origin: "https://evil.example",
+        },
+        body: JSON.stringify({
+          orderId: "order-123",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      message: "Cross-site mutation request rejected.",
     });
     expect(initiateOrderPaymentForOrderMock).not.toHaveBeenCalled();
   });

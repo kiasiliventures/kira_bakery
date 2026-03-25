@@ -1,15 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const getAuthenticatedUserMock = vi.fn();
-const ensureCustomerForUserMock = vi.fn();
 const getCustomerOrdersMock = vi.fn();
 
 vi.mock("@/lib/supabase/server", () => ({
   getAuthenticatedUser: getAuthenticatedUserMock,
-}));
-
-vi.mock("@/lib/customers", () => ({
-  ensureCustomerForUser: ensureCustomerForUserMock,
 }));
 
 vi.mock("@/lib/orders/customer-orders", () => ({
@@ -19,7 +14,6 @@ vi.mock("@/lib/orders/customer-orders", () => ({
 describe("account orders route", () => {
   beforeEach(() => {
     getAuthenticatedUserMock.mockReset();
-    ensureCustomerForUserMock.mockReset();
     getCustomerOrdersMock.mockReset();
   });
 
@@ -33,7 +27,6 @@ describe("account orders route", () => {
     await expect(response.json()).resolves.toEqual({
       message: "You must be signed in to view your orders.",
     });
-    expect(ensureCustomerForUserMock).not.toHaveBeenCalled();
     expect(getCustomerOrdersMock).not.toHaveBeenCalled();
   });
 
@@ -65,10 +58,6 @@ describe("account orders route", () => {
           status: "Paid",
         },
       ],
-    });
-    expect(ensureCustomerForUserMock).toHaveBeenCalledWith({
-      id: "customer-123",
-      email: "customer@example.com",
     });
     expect(getCustomerOrdersMock).toHaveBeenCalledWith("customer-123");
   });

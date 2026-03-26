@@ -691,7 +691,8 @@ export async function verifyOrderPaymentAuthority(
   });
   const providerVerificationDurationMs = Math.round((performance.now() - providerVerificationStartedAt) * 100) / 100;
   const expectedAmount = resolveStoredOrderAmount(row);
-  const receivedAmount = typeof status.amount === "number" ? Math.round(status.amount) : null;
+  const receivedAmount =
+    status.amount != null ? Math.round(Number(status.amount)) : null;
   const currency = resolveAttemptCurrency(row, status.currency);
   const storedPaymentStatus = normalizeStoredPaymentStatus(row.payment_status);
   const nextPaymentStatus = resolveVerifiedPaymentStatus(storedPaymentStatus, status.paymentStatus);

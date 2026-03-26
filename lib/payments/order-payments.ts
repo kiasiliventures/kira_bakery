@@ -481,6 +481,27 @@ async function persistVerifiedPaymentResult(input: {
       throw new Error("Order not found.");
     }
 
+    if (isNowPaid && normalizeStoredPaymentStatus(latestRow.payment_status) !== "paid") {
+      console.warn("order_payment_paid_persist_retry", {
+        orderId: input.row.id,
+        previousPaymentStatus: input.row.payment_status,
+        latestPaymentStatus: latestRow.payment_status,
+        nextPaymentStatus: input.nextPaymentStatus,
+        providerStatus: input.verified.providerStatus,
+      });
+
+      const forcedPaidRow = await updateOrderPaymentRow(input.row.id, updateValues);
+      if (!forcedPaidRow) {
+        throw new Error("Order not found.");
+      }
+
+      return {
+        row: forcedPaidRow,
+        updated: hasCanonicalPaymentFieldsChanged(input.row, forcedPaidRow),
+        justBecamePaid: normalizeStoredPaymentStatus(forcedPaidRow.payment_status) === "paid",
+      };
+    }
+
     return {
       row: latestRow,
       updated: hasCanonicalPaymentFieldsChanged(input.row, latestRow),
@@ -697,6 +718,17 @@ export async function verifyOrderPaymentAuthority(
   const storedPaymentStatus = normalizeStoredPaymentStatus(row.payment_status);
   const nextPaymentStatus = resolveVerifiedPaymentStatus(storedPaymentStatus, status.paymentStatus);
   const stickyPaid = storedPaymentStatus === "paid" && status.paymentStatus !== "paid";
+  console.info("order_payment_authority_verified", {
+    orderId,
+    provider: providerName,
+    orderTrackingId: status.providerReference,
+    source: options.source,
+    storedPaymentStatus,
+    verifiedPaymentStatus: status.paymentStatus,
+    providerStatus: status.providerStatus,
+    expectedAmount,
+    receivedAmount,
+  });
   const verifiedPayment: OrderPaymentVerificationRecord = {
     provider: status.provider,
     providerReference: status.providerReference,

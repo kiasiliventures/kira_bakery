@@ -654,13 +654,16 @@ export function createPesapalGateway(): PaymentGateway {
     },
     async verifyPayment(input: PaymentVerificationInput): Promise<PaymentVerificationResult> {
       const status = await getPesapalTransactionStatus(input.providerReference);
+      const normalizedPaymentStatus = normalizePesapalPaymentState(status.payment_status_description);
+      const normalizedAmount =
+        status.amount != null ? Math.round(Number(status.amount)) : null;
       return {
         provider,
         providerReference: input.providerReference,
-        paymentStatus: normalizePesapalPaymentState(status.payment_status_description),
+        paymentStatus: normalizedPaymentStatus,
         providerStatus: status.payment_status_description ?? null,
         paymentReference: status.confirmation_code ?? null,
-        amount: typeof status.amount === "number" ? Math.round(status.amount) : null,
+        amount: normalizedAmount,
         currency: "UGX",
         rawResponse: status,
         verifiedAt: new Date().toISOString(),

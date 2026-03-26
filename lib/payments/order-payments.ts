@@ -77,14 +77,84 @@ export type InitiatedOrderPayment = {
   paymentStatus: string;
 };
 
-type SyncPaymentInput = {
+export type VerifyOrderPaymentAuthorityOptions = {
   orderId: string;
   orderTrackingId?: string | null;
   merchantReference?: string | null;
   source: PaymentSyncSource;
 };
 
+type SyncPaymentInput = VerifyOrderPaymentAuthorityOptions;
+
+type OrderPaymentVerificationRecord = {
+  provider: PaymentProviderName;
+  providerReference: string;
+  providerStatus: string | null;
+  paymentReference: string | null;
+  rawResponse: unknown;
+  verifiedAt: string;
+};
+
+type PersistedOrderPaymentVerification = {
+  row: OrderPaymentRow;
+  updated: boolean;
+  justBecamePaid: boolean;
+};
+
+export type OrderPaymentAuthorityResult = {
+  ok: boolean;
+  orderId: string;
+  provider: PaymentProviderName;
+  verificationState: PaymentStatus;
+  providerStatus: string | null;
+  stickyPaid: boolean;
+  wasAlreadyPaid: boolean;
+  isNowPaid: boolean;
+  justBecamePaid: boolean;
+  amountExpected: number;
+  amountReceived: number | null;
+  currency: string;
+  providerTrackingId: string | null;
+  merchantReference: string;
+  paymentReference: string | null;
+  updated: boolean;
+  orderSnapshot: OrderPaymentSnapshot;
+  message: string;
+};
+
 const PAYMENT_STATUS_REFRESH_REVALIDATE_SECONDS = 15;
+const ORDER_PAYMENT_SELECTION = [
+  "id",
+  "order_access_token",
+  "total_ugx",
+  "total_price",
+  "status",
+  "order_status",
+  "customer_name",
+  "customer_phone",
+  "phone",
+  "customer_email",
+  "email",
+  "payment_status",
+  "payment_provider",
+  "payment_reference",
+  "payment_redirect_url",
+  "paid_at",
+  "order_tracking_id",
+  "created_at",
+  "order_items(name,quantity,selected_size,selected_flavor)",
+].join(",");
+const NOT_ALREADY_PAID_FILTER = [
+  "payment_status.is.null",
+  "payment_status.eq.unpaid",
+  "payment_status.eq.pending",
+  "payment_status.eq.failed",
+  "payment_status.eq.payment_failed",
+  "payment_status.eq.reversed",
+  "payment_status.eq.cancelled",
+  "payment_status.eq.canceled",
+  "payment_status.eq.invalid",
+].join(",");
 
 class OrderAccessDeniedError extends Error {
   constructor() {
@@ -132,48 +202,11 @@ function mapViewState(
   return "pending";
 }
 
-function canReuseSettledPaymentState(
-  row: OrderPaymentRow,
-  providerReference: string,
-  source: PaymentSyncSource,
-) {
-  if (source === "admin_reverify") {
-    return false;
-  }
-
-  return (
-    normalizeStoredPaymentStatus(row.payment_status) === "paid"
-    && row.order_tracking_id === providerReference
-  );
-}
-
 async function getOrderPaymentRow(orderId: string): Promise<OrderPaymentRow | null> {
   const supabase = getSupabaseServerClient();
   const { data, error } = await supabase
     .from("orders")
-    .select(
-      [
-        "id",
-        "order_access_token",
-        "total_ugx",
-        "total_price",
-        "status",
-        "order_status",
-        "customer_name",
-        "customer_phone",
-        "phone",
-        "customer_email",
-        "email",
-        "payment_status",
-        "payment_provider",
-        "payment_reference",
-        "payment_redirect_url",
-        "paid_at",
-        "order_tracking_id",
-        "created_at",
-        "order_items(name,quantity,selected_size,selected_flavor)",
-      ].join(","),
-    )
+    .select(ORDER_PAYMENT_SELECTION)
     .eq("id", orderId)
     .maybeSingle();
 
@@ -210,14 +243,43 @@ function buildSnapshot(
   };
 }
 
-async function updateOrderPaymentRow(orderId: string, values: Partial<OrderPaymentRow>) {
+async function updateOrderPaymentRow(
+  orderId: string,
+  values: Partial<OrderPaymentRow>,
+  options?: {
+    onlyIfNotAlreadyPaid?: boolean;
+  },
+): Promise<OrderPaymentRow | null> {
   const supabase = getSupabaseServerClient();
-  const { error } = await supabase.from("orders").update(values).eq("id", orderId);
+  let query = supabase
+    .from("orders")
+    .update(values)
+    .eq("id", orderId);
+
+  if (options?.onlyIfNotAlreadyPaid) {
+    query = query.or(NOT_ALREADY_PAID_FILTER);
+  }
+
+  const { data, error } = await query
+    .select(ORDER_PAYMENT_SELECTION)
+    .maybeSingle();
 
   if (error) {
     console.error("order_payment_update_failed", { orderId, error: error.message });
     throw new Error("Unable to update order payment details.");
   }
+
+  return (data as OrderPaymentRow | null) ?? null;
+}
+
+function hasCanonicalPaymentFieldsChanged(previous: OrderPaymentRow, next: OrderPaymentRow) {
+  return (
+    previous.payment_status !== next.payment_status
+    || previous.payment_provider !== next.payment_provider
+    || previous.payment_reference !== next.payment_reference
+    || previous.paid_at !== next.paid_at
+    || previous.order_tracking_id !== next.order_tracking_id
+  );
 }
 
 async function upsertPaymentAttempt(input: PaymentAttemptRecordInput) {
@@ -294,6 +356,148 @@ function assertOrderAccess(row: OrderPaymentRow, accessToken?: string | null) {
   if (!accessToken || accessToken !== row.order_access_token) {
     throw new OrderAccessDeniedError();
   }
+}
+
+function buildAuthorityMessage(input: {
+  ok: boolean;
+  stickyPaid: boolean;
+  justBecamePaid: boolean;
+  wasAlreadyPaid: boolean;
+  verificationState: PaymentStatus;
+}) {
+  if (!input.ok) {
+    return "Payment amount verification failed. Order held for review.";
+  }
+
+  if (input.justBecamePaid) {
+    return "Payment verified and paid transition persisted.";
+  }
+
+  if (input.stickyPaid) {
+    return "Payment remains paid after reverification.";
+  }
+
+  if (input.wasAlreadyPaid && input.verificationState === "paid") {
+    return "Payment was already settled.";
+  }
+
+  if (input.verificationState === "pending") {
+    return "Payment is still pending.";
+  }
+
+  if (input.verificationState === "failed") {
+    return "Payment verification shows a failed payment state.";
+  }
+
+  if (input.verificationState === "cancelled") {
+    return "Payment verification shows a cancelled payment state.";
+  }
+
+  return "Payment verification completed.";
+}
+
+function buildAuthorityResult(input: {
+  ok: boolean;
+  row: OrderPaymentRow;
+  provider: PaymentProviderName;
+  providerStatus: string | null;
+  stickyPaid: boolean;
+  wasAlreadyPaid: boolean;
+  isNowPaid: boolean;
+  justBecamePaid: boolean;
+  amountExpected: number;
+  amountReceived: number | null;
+  currency: string;
+  paymentReference: string | null;
+  updated: boolean;
+  snapshotVerified: boolean;
+}) : OrderPaymentAuthorityResult {
+  const verificationState = normalizeStoredPaymentStatus(input.row.payment_status);
+
+  return {
+    ok: input.ok,
+    orderId: input.row.id,
+    provider: input.provider,
+    verificationState,
+    providerStatus: input.providerStatus,
+    stickyPaid: input.stickyPaid,
+    wasAlreadyPaid: input.wasAlreadyPaid,
+    isNowPaid: input.isNowPaid,
+    justBecamePaid: input.justBecamePaid,
+    amountExpected: input.amountExpected,
+    amountReceived: input.amountReceived,
+    currency: input.currency,
+    providerTrackingId: input.row.order_tracking_id,
+    merchantReference: input.row.id,
+    paymentReference: input.paymentReference ?? input.row.payment_reference,
+    updated: input.updated,
+    orderSnapshot: buildSnapshot(input.row, {
+      verified: input.snapshotVerified,
+    }),
+    message: buildAuthorityMessage({
+      ok: input.ok,
+      stickyPaid: input.stickyPaid,
+      justBecamePaid: input.justBecamePaid,
+      wasAlreadyPaid: input.wasAlreadyPaid,
+      verificationState,
+    }),
+  };
+}
+
+async function persistVerifiedPaymentResult(input: {
+  row: OrderPaymentRow;
+  verified: OrderPaymentVerificationRecord;
+  nextPaymentStatus: PaymentStatus;
+}): Promise<PersistedOrderPaymentVerification> {
+  const nextPaidAt =
+    input.nextPaymentStatus === "paid"
+      ? input.row.paid_at ?? input.verified.verifiedAt
+      : input.row.paid_at;
+  const updateValues: Partial<OrderPaymentRow> = {
+    payment_provider: input.verified.provider,
+    payment_status: input.nextPaymentStatus,
+    payment_reference: input.verified.paymentReference ?? input.row.payment_reference,
+    paid_at: nextPaidAt,
+    order_tracking_id: input.verified.providerReference,
+  };
+  const wasAlreadyPaid = normalizeStoredPaymentStatus(input.row.payment_status) === "paid";
+  const isNowPaid = input.nextPaymentStatus === "paid";
+
+  if (!wasAlreadyPaid) {
+    const claimedRow = await updateOrderPaymentRow(input.row.id, updateValues, {
+      onlyIfNotAlreadyPaid: true,
+    });
+
+    if (claimedRow) {
+      return {
+        row: claimedRow,
+        updated: hasCanonicalPaymentFieldsChanged(input.row, claimedRow),
+        justBecamePaid: isNowPaid,
+      };
+    }
+
+    const latestRow = await getOrderPaymentRow(input.row.id);
+    if (!latestRow) {
+      throw new Error("Order not found.");
+    }
+
+    return {
+      row: latestRow,
+      updated: hasCanonicalPaymentFieldsChanged(input.row, latestRow),
+      justBecamePaid: false,
+    };
+  }
+
+  const updatedRow = await updateOrderPaymentRow(input.row.id, updateValues);
+  if (!updatedRow) {
+    throw new Error("Order not found.");
+  }
+
+  return {
+    row: updatedRow,
+    updated: hasCanonicalPaymentFieldsChanged(input.row, updatedRow),
+    justBecamePaid: false,
+  };
 }
 
 export async function initiateOrderPaymentForOrder(
@@ -422,99 +626,97 @@ export async function initiateOrderPaymentForOrder(
   };
 }
 
-export async function syncOrderPaymentForOrder(
-  input: SyncPaymentInput,
-): Promise<OrderPaymentSnapshot> {
-  if (input.merchantReference && input.merchantReference !== input.orderId) {
+export async function verifyOrderPaymentAuthority(
+  orderId: string,
+  options: Omit<VerifyOrderPaymentAuthorityOptions, "orderId">,
+): Promise<OrderPaymentAuthorityResult> {
+  if (options.merchantReference && options.merchantReference !== orderId) {
     console.error("order_payment_reference_mismatch", {
-      orderId: input.orderId,
-      merchantReference: input.merchantReference,
-      source: input.source,
+      orderId,
+      merchantReference: options.merchantReference,
+      source: options.source,
     });
     throw new Error("Merchant reference does not match the order.");
   }
 
-  const row = await getOrderPaymentRow(input.orderId);
+  const row = await getOrderPaymentRow(orderId);
   if (!row) {
     throw new Error("Order not found.");
   }
 
   const providerName = resolveProviderForVerification(row);
   const gateway = getPaymentGateway(providerName);
-  const providerReference = input.orderTrackingId ?? row.order_tracking_id;
+  const providerReference = options.orderTrackingId ?? row.order_tracking_id;
 
   if (row.payment_provider && row.payment_provider !== providerName) {
     throw new Error("Order is assigned to a different payment provider.");
   }
 
   if (!providerReference) {
-    return buildSnapshot(row, {
-      verified: false,
-    });
+    throw new Error("Order does not have a payment tracking ID yet.");
   }
-
-  console.info("STATUS_CHECK", {
-    orderId: input.orderId,
-    merchantReference: row.id,
-    trackingId: providerReference,
-    amount: row.total_ugx,
-    provider: providerName,
-    source: input.source,
-  });
 
   if (row.order_tracking_id && row.order_tracking_id !== providerReference) {
     console.error("order_payment_tracking_mismatch", {
-      orderId: input.orderId,
+      orderId,
       expected: row.order_tracking_id,
       received: providerReference,
-      source: input.source,
+      source: options.source,
     });
     throw new Error("Tracking ID does not match the stored order.");
   }
 
-  if (canReuseSettledPaymentState(row, providerReference, input.source)) {
-    console.info("order_payment_sync_short_circuit", {
-      orderId: input.orderId,
-      provider: providerName,
-      orderTrackingId: providerReference,
-      source: input.source,
-      paymentStatus: row.payment_status,
-    });
-    return buildSnapshot(row, {
-      verified: true,
-    });
-  }
-
-  console.info("order_payment_sync_start", {
-    orderId: input.orderId,
+  console.info("order_payment_authority_start", {
+    orderId,
     provider: providerName,
     orderTrackingId: providerReference,
-    source: input.source,
+    source: options.source,
+    currentPaymentStatus: row.payment_status,
+  });
+  console.info("STATUS_CHECK", {
+    orderId,
+    merchantReference: row.id,
+    trackingId: providerReference,
+    amount: row.total_ugx,
+    provider: providerName,
+    source: options.source,
   });
 
   const providerVerificationStartedAt = performance.now();
   const status = await gateway.verifyPayment({
-    orderId: input.orderId,
+    orderId,
     providerReference,
-    merchantReference: input.merchantReference,
-    source: input.source,
+    merchantReference: options.merchantReference,
+    source: options.source,
   });
   const providerVerificationDurationMs = Math.round((performance.now() - providerVerificationStartedAt) * 100) / 100;
   const expectedAmount = resolveStoredOrderAmount(row);
   const receivedAmount = typeof status.amount === "number" ? Math.round(status.amount) : null;
+  const currency = resolveAttemptCurrency(row, status.currency);
+  const storedPaymentStatus = normalizeStoredPaymentStatus(row.payment_status);
+  const nextPaymentStatus = resolveVerifiedPaymentStatus(storedPaymentStatus, status.paymentStatus);
+  const stickyPaid = storedPaymentStatus === "paid" && status.paymentStatus !== "paid";
+  const verifiedPayment: OrderPaymentVerificationRecord = {
+    provider: status.provider,
+    providerReference: status.providerReference,
+    providerStatus: status.providerStatus,
+    paymentReference: status.paymentReference,
+    rawResponse: status.rawResponse,
+    verifiedAt: status.verifiedAt,
+  };
 
   if (status.paymentStatus === "paid" && receivedAmount !== expectedAmount) {
     logSecurityEvent({
       event: "payment_amount_mismatch",
       severity: "error",
       details: {
-        orderId: input.orderId,
+        orderId,
         provider: status.provider,
         providerReference: status.providerReference,
-        source: input.source,
+        source: options.source,
         expectedAmount,
         receivedAmount,
-        currency: status.currency ?? "UGX",
+        currency,
         providerStatus: status.providerStatus,
       },
       report: {
@@ -524,13 +726,13 @@ export async function syncOrderPaymentForOrder(
       },
     });
     console.error("payment_amount_mismatch", {
-      orderId: input.orderId,
+      orderId,
       provider: status.provider,
       providerReference: status.providerReference,
-      source: input.source,
+      source: options.source,
       expectedAmount,
       receivedAmount,
-      currency: status.currency ?? "UGX",
+      currency,
       providerStatus: status.providerStatus,
     });
 
@@ -539,8 +741,8 @@ export async function syncOrderPaymentForOrder(
       provider: status.provider,
       providerReference: status.providerReference,
       amount: receivedAmount ?? expectedAmount,
-      currency: resolveAttemptCurrency(row, status.currency),
-      status: "pending",
+      currency,
+      status: storedPaymentStatus === "paid" ? storedPaymentStatus : "pending",
       redirectUrl: row.payment_redirect_url,
       rawProviderResponse: {
         verificationRejected: "amount_mismatch",
@@ -550,59 +752,91 @@ export async function syncOrderPaymentForOrder(
         payload: status.rawResponse,
       },
       createdAt: row.created_at,
-      verifiedAt: status.verifiedAt,
+      verifiedAt: row.paid_at ?? status.verifiedAt,
     });
 
-    throw new Error("Payment amount verification failed. Order held for review.");
+    return buildAuthorityResult({
+      ok: false,
+      row,
+      provider: status.provider,
+      providerStatus: status.providerStatus,
+      stickyPaid,
+      wasAlreadyPaid: storedPaymentStatus === "paid",
+      isNowPaid: nextPaymentStatus === "paid",
+      justBecamePaid: false,
+      amountExpected: expectedAmount,
+      amountReceived: receivedAmount,
+      currency,
+      paymentReference: status.paymentReference,
+      updated: false,
+      snapshotVerified: false,
+    });
   }
 
-  const storedPaymentStatus = normalizeStoredPaymentStatus(row.payment_status);
-  const nextPaymentStatus = resolveVerifiedPaymentStatus(storedPaymentStatus, status.paymentStatus);
-  const nextPaidAt = nextPaymentStatus === "paid" ? row.paid_at ?? status.verifiedAt : row.paid_at;
-
-  await updateOrderPaymentRow(input.orderId, {
-    payment_provider: status.provider,
-    payment_status: nextPaymentStatus,
-    payment_reference: status.paymentReference ?? row.payment_reference,
-    paid_at: nextPaidAt,
-    order_tracking_id: status.providerReference,
+  const persisted = await persistVerifiedPaymentResult({
+    row,
+    verified: verifiedPayment,
+    nextPaymentStatus,
   });
+  const finalPaymentStatus = normalizeStoredPaymentStatus(persisted.row.payment_status);
 
   await upsertPaymentAttempt({
-    orderId: row.id,
+    orderId: persisted.row.id,
     provider: status.provider,
     providerReference: status.providerReference,
     amount: receivedAmount ?? expectedAmount,
-    currency: resolveAttemptCurrency(row, status.currency),
-    status: nextPaymentStatus,
-    redirectUrl: row.payment_redirect_url,
+    currency,
+    status: finalPaymentStatus,
+    redirectUrl: persisted.row.payment_redirect_url,
     rawProviderResponse: status.rawResponse,
-    createdAt: row.created_at,
-    verifiedAt: nextPaidAt ?? status.verifiedAt,
+    createdAt: persisted.row.created_at,
+    verifiedAt: persisted.row.paid_at ?? status.verifiedAt,
   });
 
-  const nextRow: OrderPaymentRow = {
-    ...row,
-    payment_provider: status.provider,
-    payment_status: nextPaymentStatus,
-    payment_reference: status.paymentReference ?? row.payment_reference,
-    paid_at: nextPaidAt,
-    order_tracking_id: status.providerReference,
-  };
-
-  console.info("order_payment_sync_success", {
-    orderId: input.orderId,
+  console.info("order_payment_authority_success", {
+    orderId,
     provider: providerName,
     orderTrackingId: status.providerReference,
-    source: input.source,
-    paymentStatus: nextPaymentStatus,
+    source: options.source,
+    paymentStatus: finalPaymentStatus,
     providerStatus: status.providerStatus,
+    stickyPaid,
+    justBecamePaid: persisted.justBecamePaid,
     durationMs: providerVerificationDurationMs,
   });
 
-  return buildSnapshot(nextRow, {
-    verified: true,
+  return buildAuthorityResult({
+    ok: true,
+    row: persisted.row,
+    provider: status.provider,
+    providerStatus: status.providerStatus,
+    stickyPaid,
+    wasAlreadyPaid: storedPaymentStatus === "paid",
+    isNowPaid: finalPaymentStatus === "paid",
+    justBecamePaid: persisted.justBecamePaid,
+    amountExpected: expectedAmount,
+    amountReceived: receivedAmount,
+    currency,
+    paymentReference: status.paymentReference,
+    updated: persisted.updated,
+    snapshotVerified: true,
   });
+}
+
+export async function syncOrderPaymentForOrder(
+  input: SyncPaymentInput,
+): Promise<OrderPaymentSnapshot> {
+  const result = await verifyOrderPaymentAuthority(input.orderId, {
+    orderTrackingId: input.orderTrackingId,
+    merchantReference: input.merchantReference,
+    source: input.source,
+  });
+
+  if (!result.ok) {
+    throw new Error(result.message);
+  }
+
+  return result.orderSnapshot;
 }
 
 export async function getOrderPaymentSnapshot(

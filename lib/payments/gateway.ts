@@ -6,13 +6,16 @@ import { createPesapalGateway } from "@/lib/payments/providers/pesapal";
 
 export type PaymentStatus = "pending" | "paid" | "failed" | "cancelled";
 
-export type PaymentSyncSource =
-  | "checkout"
-  | "initiate"
-  | "ipn"
-  | "callback"
-  | "status"
-  | "admin_reverify";
+export const paymentSyncSources = [
+  "checkout",
+  "initiate",
+  "ipn",
+  "callback",
+  "status",
+  "admin_reverify",
+] as const;
+
+export type PaymentSyncSource = (typeof paymentSyncSources)[number];
 
 export type PaymentInitiationInput = {
   orderId: string;

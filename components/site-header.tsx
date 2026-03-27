@@ -18,7 +18,7 @@ import { cn } from "@/lib/utils";
 const desktopLinks = [
   { href: "/", label: "Home" },
   { href: "/menu", label: "Menu" },
-  { href: "/cake-builder", label: "Custom Cake" },
+  { href: "/cake-builder", label: "Cake Builder" },
   { href: "/classes", label: "Classes" },
   { href: "/contact", label: "Contact" },
 ];
@@ -119,13 +119,13 @@ export function SiteHeader() {
           >
             KiRA Bakery
           </Link>
-          <nav className="hidden items-center gap-1 rounded-2xl border border-border bg-surface-muted p-1.5 md:flex">
+          <nav className="hidden min-h-14 flex-nowrap items-center gap-1 rounded-2xl border border-border bg-surface-muted p-1.5 md:flex">
             {desktopLinks.map((link) => (
               <Link
                 key={link.href}
                 href={link.href}
                 className={cn(
-                  "rounded-xl px-3.5 py-2 text-[0.95rem] font-medium text-muted transition-all duration-200 hover:bg-surface hover:text-foreground",
+                  "inline-flex h-11 items-center whitespace-nowrap rounded-xl px-3.5 py-2 text-[0.95rem] font-medium text-muted transition-all duration-200 hover:bg-surface hover:text-foreground",
                   isActiveLink(pathname, link.href) && "bg-surface text-foreground shadow-[var(--shadow-soft)]",
                 )}
               >
@@ -185,7 +185,7 @@ export function SiteHeader() {
                 key={link.href}
                 href={link.href}
                 className={cn(
-                  "flex items-center justify-between rounded-2xl border border-transparent bg-surface-alt px-4 py-3.5 text-base font-medium text-foreground transition-all duration-200 hover:border-border hover:bg-surface-muted",
+                  "flex items-center rounded-2xl border border-transparent bg-surface-alt px-4 py-3.5 text-base font-medium text-foreground transition-all duration-200 hover:border-border hover:bg-surface-muted",
                   isActiveLink(pathname, link.href) && "border-border bg-surface text-accent shadow-[var(--shadow-soft)]",
                 )}
                 onClick={() => {
@@ -193,7 +193,6 @@ export function SiteHeader() {
                 }}
               >
                 <span>{link.label}</span>
-                <span className="text-sm text-muted">Open</span>
               </Link>
             ))}
           </nav>

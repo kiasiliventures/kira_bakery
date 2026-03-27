@@ -4,6 +4,7 @@
   "description": "Delicious baked fresh daily in Kira, Uganda.",
   "start_url": "/",
   "display": "standalone",
+  "orientation": "portrait-primary",
   "background_color": "#F6EFE7",
   "theme_color": "#C62828",
   "icons": [

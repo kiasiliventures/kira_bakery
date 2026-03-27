@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Analytics } from "@vercel/analytics/react";
+import { PortraitOrientationHint } from "@/components/portrait-orientation-hint";
 import { AuthProvider } from "@/components/providers/auth-provider";
 import { AppProvider } from "@/components/providers/app-provider";
 import { PwaRegister } from "@/components/pwa-register";
@@ -92,6 +93,7 @@ export default function RootLayout({
         <AuthProvider>
           <AppProvider>
             <PwaRegister />
+            <PortraitOrientationHint />
             <SiteHeader />
             <main className="mx-auto w-full max-w-6xl px-4 py-8">{children}</main>
             <SiteFooter />

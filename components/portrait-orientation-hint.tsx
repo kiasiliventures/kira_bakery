@@ -28,7 +28,7 @@ export function PortraitOrientationHint() {
   }
 
   return (
-    <div className="fixed inset-x-3 bottom-3 z-[95] md:hidden">
+    <div className="fixed inset-x-3 bottom-3 z-[95]">
       <div className="mx-auto max-w-sm rounded-2xl border border-border bg-surface-raised px-4 py-3 text-center shadow-[var(--shadow-modal)] backdrop-blur-xl">
         <p className="text-sm font-medium text-foreground">
           For the best experience, please rotate your phone to portrait.

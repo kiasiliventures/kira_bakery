@@ -6,7 +6,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/components/providers/auth-provider";
 
-function normalizeNextPath(pathname: string | null) {
+export function normalizeNextPath(pathname: string | null) {
   if (!pathname || !pathname.startsWith("/")) {
     return "/account/orders";
   }
@@ -18,7 +18,7 @@ function normalizeNextPath(pathname: string | null) {
   return pathname;
 }
 
-function getCustomerLabel(email: string | undefined, fullName: string | undefined) {
+export function getCustomerLabel(email: string | undefined, fullName: string | undefined) {
   const normalizedFullName = fullName?.trim();
   if (normalizedFullName) {
     return normalizedFullName.split(/\s+/)[0] ?? normalizedFullName;

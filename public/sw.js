@@ -100,3 +100,71 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(staleWhileRevalidate(RUNTIME_CACHE_NAME, request));
   }
 });
+
+self.addEventListener("push", (event) => {
+  const fallbackPayload = {
+    title: "KiRA Bakery",
+    body: "Your order is ready.",
+    url: "/",
+    tag: "kira-order-update",
+    icon: "/icons/icon-192.png",
+    badge: "/icons/icon-192.png",
+    data: {
+      url: "/",
+    },
+  };
+
+  const payload = (() => {
+    if (!event.data) {
+      return fallbackPayload;
+    }
+
+    try {
+      const parsed = event.data.json();
+      return {
+        ...fallbackPayload,
+        ...parsed,
+        data: {
+          ...fallbackPayload.data,
+          ...(parsed?.data ?? {}),
+          url: parsed?.url || parsed?.data?.url || fallbackPayload.url,
+        },
+      };
+    } catch {
+      return fallbackPayload;
+    }
+  })();
+
+  event.waitUntil(
+    self.registration.showNotification(payload.title, {
+      body: payload.body,
+      icon: payload.icon,
+      badge: payload.badge,
+      tag: payload.tag,
+      data: payload.data,
+    }),
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+
+  const notificationUrl = event.notification.data?.url || "/";
+  const targetUrl = new URL(notificationUrl, self.location.origin).href;
+
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
+      for (const client of clientList) {
+        if (client.url === targetUrl && "focus" in client) {
+          return client.focus();
+        }
+      }
+
+      if (self.clients.openWindow) {
+        return self.clients.openWindow(targetUrl);
+      }
+
+      return undefined;
+    }),
+  );
+});

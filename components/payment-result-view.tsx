@@ -2,10 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { EnableOrderNotifications } from "@/components/enable-order-notifications";
 import { useCart } from "@/components/providers/app-provider";
 import { OrderReviewPrompt } from "@/components/order-review-prompt";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatUGX } from "@/lib/format";
 
 type PaymentResultOrder = {
@@ -149,6 +150,7 @@ export function PaymentResultView() {
   const title = getTitle(order?.viewState ?? null);
   const message = getMessage(order);
   const showReviewPrompt = !isLoading && !error && shouldShowReviewPrompt(order);
+  const showNotificationOptIn = !isLoading && !error && order?.viewState === "success" && order.verified;
 
   useEffect(() => {
     if (order?.viewState !== "success" || hasClearedCartRef.current) {
@@ -246,6 +248,23 @@ export function PaymentResultView() {
             </div>
           </CardContent>
         </Card>
+
+        {showNotificationOptIn && order && (
+          <Card className="rounded-[28px] border border-accent/25 bg-surface shadow-[var(--shadow-card)]">
+            <CardHeader className="gap-2 p-8 pb-4">
+              <CardTitle className="font-serif text-2xl text-foreground">
+                Get notified when your order is ready
+              </CardTitle>
+              <CardDescription className="max-w-2xl text-sm leading-6 text-muted">
+                Turn on notifications and we&apos;ll alert you as soon as your order is ready for
+                pickup or delivery.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-8 pt-0">
+              <EnableOrderNotifications orderId={order.orderId} />
+            </CardContent>
+          </Card>
+        )}
 
         {showReviewPrompt && <OrderReviewPrompt />}
       </div>

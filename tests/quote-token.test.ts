@@ -18,6 +18,7 @@ describe("delivery quote token regression tests", () => {
     const { createDeliveryQuoteToken, verifyDeliveryQuoteToken } = await import("@/lib/delivery/quote-token");
 
     const token = createDeliveryQuoteToken({
+      currency: "UGX",
       destination: {
         placeId: "place-123",
         addressText: "Kira Town",
@@ -28,6 +29,14 @@ describe("delivery quote token regression tests", () => {
       deliveryFee: 8000,
       pricingConfigId: "pricing-config-1",
       storeLocationId: "store-location-1",
+      store: {
+        id: "store-location-1",
+        code: "KIRA",
+        name: "KiRA Bakery",
+        addressText: "Kira, Uganda",
+        latitude: 0.39,
+        longitude: 32.61,
+      },
     });
 
     expect(verifyDeliveryQuoteToken(token)).toEqual(

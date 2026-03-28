@@ -295,7 +295,7 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
           {deliveryMethod === "pickup"
             ? "Pickup keeps your total at the cart subtotal."
             : hasValidDeliveryQuote
-              ? "Delivery fee has been verified and signed by the server."
+              ? "Kindly note: deliveries after 7:00 PM will be scheduled for the following day."
               : "Choose a verified location before placing a delivery order."}
         </p>
         <Button disabled={items.length === 0 || isSubmitting || (requiresDeliveryQuote && !hasValidDeliveryQuote)}>

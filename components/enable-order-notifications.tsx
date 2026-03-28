@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { urlBase64ToUint8Array } from "@/lib/push/vapid";
 
 type EnableOrderNotificationsProps = {
@@ -39,6 +40,39 @@ export function EnableOrderNotifications({
 }: EnableOrderNotificationsProps) {
   const [requestState, setRequestState] = useState<RequestState>("idle");
   const [message, setMessage] = useState<string | null>(null);
+  const [hasExistingSubscription, setHasExistingSubscription] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadExistingSubscription() {
+      if (!getSupportedState() || Notification.permission !== "granted") {
+        if (!cancelled) {
+          setHasExistingSubscription(false);
+        }
+        return;
+      }
+
+      try {
+        const registration = await navigator.serviceWorker.getRegistration() ?? await navigator.serviceWorker.ready;
+        const existingSubscription = await registration.pushManager.getSubscription();
+
+        if (!cancelled) {
+          setHasExistingSubscription(Boolean(existingSubscription));
+        }
+      } catch {
+        if (!cancelled) {
+          setHasExistingSubscription(false);
+        }
+      }
+    }
+
+    void loadExistingSubscription();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handleEnableNotifications() {
     if (!getSupportedState()) {
@@ -105,6 +139,7 @@ export function EnableOrderNotifications({
       }
 
       setRequestState("success");
+      setHasExistingSubscription(true);
       setMessage("Notifications are enabled. We'll alert you as soon as your order is ready.");
     } catch (error) {
       setRequestState("error");
@@ -116,32 +151,47 @@ export function EnableOrderNotifications({
     }
   }
 
+  if (hasExistingSubscription && requestState !== "success") {
+    return null;
+  }
+
   return (
-    <div className="space-y-3">
-      <Button
-        type="button"
-        onClick={() => {
-          void handleEnableNotifications();
-        }}
-        loading={requestState === "submitting"}
-        disabled={requestState === "success"}
-        variant="outline"
-        size="sm"
-        className="w-full sm:w-auto"
-      >
-        {requestState === "success" ? "Notifications enabled" : "Enable notifications"}
-      </Button>
-      {message && (
-        <p
-          className={
-            requestState === "success"
-              ? "text-sm text-emerald-700"
-              : "text-sm text-muted"
-          }
+    <Card className="rounded-[28px] border border-border/60 bg-surface-alt/40 shadow-[var(--shadow-soft)]">
+      <CardHeader className="gap-2 p-8 pb-4">
+        <CardTitle className="font-serif text-2xl text-foreground">
+          Get notified when your order is ready
+        </CardTitle>
+        <CardDescription className="max-w-2xl text-sm leading-6 text-muted">
+          Turn on notifications and we&apos;ll alert you as soon as your order is ready for pickup
+          or delivery.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3 p-8 pt-0">
+        <Button
+          type="button"
+          onClick={() => {
+            void handleEnableNotifications();
+          }}
+          loading={requestState === "submitting"}
+          disabled={requestState === "success"}
+          variant="outline"
+          size="sm"
+          className="w-full sm:w-auto"
         >
-          {message}
-        </p>
-      )}
-    </div>
+          {requestState === "success" ? "Notifications enabled" : "Enable notifications"}
+        </Button>
+        {message && (
+          <p
+            className={
+              requestState === "success"
+                ? "text-sm text-emerald-700"
+                : "text-sm text-muted"
+            }
+          >
+            {message}
+          </p>
+        )}
+      </CardContent>
+    </Card>
   );
 }

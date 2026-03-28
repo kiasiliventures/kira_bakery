@@ -6,7 +6,7 @@ import { EnableOrderNotifications } from "@/components/enable-order-notification
 import { useCart } from "@/components/providers/app-provider";
 import { OrderReviewPrompt } from "@/components/order-review-prompt";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatUGX } from "@/lib/format";
 
 type PaymentResultOrder = {
@@ -251,22 +251,7 @@ export function PaymentResultView() {
 
         {showReviewPrompt && <OrderReviewPrompt />}
 
-        {showNotificationOptIn && order && (
-          <Card className="rounded-[28px] border border-border/60 bg-surface-alt/40 shadow-[var(--shadow-soft)]">
-            <CardHeader className="gap-2 p-8 pb-4">
-              <CardTitle className="font-serif text-2xl text-foreground">
-                Get notified when your order is ready
-              </CardTitle>
-              <CardDescription className="max-w-2xl text-sm leading-6 text-muted">
-                Turn on notifications and we&apos;ll alert you as soon as your order is ready for
-                pickup or delivery.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="p-8 pt-0">
-              <EnableOrderNotifications orderId={order.orderId} />
-            </CardContent>
-          </Card>
-        )}
+        {showNotificationOptIn && order && <EnableOrderNotifications orderId={order.orderId} />}
       </div>
     </main>
   );

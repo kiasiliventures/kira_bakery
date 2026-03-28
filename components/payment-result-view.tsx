@@ -249,8 +249,10 @@ export function PaymentResultView() {
           </CardContent>
         </Card>
 
+        {showReviewPrompt && <OrderReviewPrompt />}
+
         {showNotificationOptIn && order && (
-          <Card className="rounded-[28px] border border-accent/25 bg-surface shadow-[var(--shadow-card)]">
+          <Card className="rounded-[28px] border border-border/60 bg-surface-alt/40 shadow-[var(--shadow-soft)]">
             <CardHeader className="gap-2 p-8 pb-4">
               <CardTitle className="font-serif text-2xl text-foreground">
                 Get notified when your order is ready
@@ -265,8 +267,6 @@ export function PaymentResultView() {
             </CardContent>
           </Card>
         )}
-
-        {showReviewPrompt && <OrderReviewPrompt />}
       </div>
     </main>
   );

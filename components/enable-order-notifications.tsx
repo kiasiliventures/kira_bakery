@@ -125,6 +125,9 @@ export function EnableOrderNotifications({
         }}
         loading={requestState === "submitting"}
         disabled={requestState === "success"}
+        variant="outline"
+        size="sm"
+        className="w-full sm:w-auto"
       >
         {requestState === "success" ? "Notifications enabled" : "Enable notifications"}
       </Button>

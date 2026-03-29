@@ -80,6 +80,13 @@ type TimingEntry = {
   durationMs: number;
 };
 
+type RequestedCheckoutItem = {
+  productId: string;
+  quantity: number;
+  selectedSize?: string;
+  selectedFlavor?: string;
+};
+
 type SharedPlaceOrderPayload = {
   order_id: string;
   order_access_token: string;
@@ -227,6 +234,59 @@ function buildInsufficientStockMessage(productName: string, stockQuantity: numbe
   } left.`;
 }
 
+function buildRequestedQuantityByProduct(
+  requestedItems: Array<{
+    productId: string;
+    quantity: number;
+  }>,
+) {
+  const requestedQuantityByProduct = new Map<string, number>();
+
+  for (const item of requestedItems) {
+    requestedQuantityByProduct.set(
+      item.productId,
+      (requestedQuantityByProduct.get(item.productId) ?? 0) + item.quantity,
+    );
+  }
+
+  return requestedQuantityByProduct;
+}
+
+function normalizeOptionalSelection(value?: string) {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function buildRequestedCheckoutItemKey(item: RequestedCheckoutItem) {
+  return `${item.productId}::${normalizeOptionalSelection(item.selectedSize) ?? ""}::${normalizeOptionalSelection(item.selectedFlavor) ?? ""}`;
+}
+
+function normalizeRequestedCheckoutItems(requestedItems: RequestedCheckoutItem[]) {
+  const normalizedItemsByKey = new Map<string, RequestedCheckoutItem>();
+
+  for (const item of requestedItems) {
+    const normalizedItem: RequestedCheckoutItem = {
+      productId: item.productId,
+      quantity: item.quantity,
+      selectedSize: normalizeOptionalSelection(item.selectedSize),
+      selectedFlavor: normalizeOptionalSelection(item.selectedFlavor),
+    };
+    const key = buildRequestedCheckoutItemKey(normalizedItem);
+    const existing = normalizedItemsByKey.get(key);
+
+    if (existing) {
+      existing.quantity += normalizedItem.quantity;
+      continue;
+    }
+
+    normalizedItemsByKey.set(key, normalizedItem);
+  }
+
+  return [...normalizedItemsByKey.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([, item]) => item);
+}
+
 function buildPlaceOrderRpcPayload(input: {
   orderId: string;
   orderAccessToken: string;
@@ -310,15 +370,11 @@ function selectLegacyVariant(
 }
 
 async function loadCanonicalItems(
-  requestedItems: Array<{
-    productId: string;
-    quantity: number;
-    selectedSize?: string;
-    selectedFlavor?: string;
-  }>,
+  requestedItems: RequestedCheckoutItem[],
 ) {
   const supabase = getSupabaseServerClient();
   const productIds = [...new Set(requestedItems.map((item) => item.productId))];
+  const requestedQuantityByProduct = buildRequestedQuantityByProduct(requestedItems);
 
   const shared = await supabase
     .from("products")
@@ -431,7 +487,7 @@ async function loadCanonicalItems(
     if (!product.is_available || product.stock_quantity <= 0) {
       return { response: badRequest(`${product.name} is unavailable.`) };
     }
-    if (item.quantity > product.stock_quantity) {
+    if ((requestedQuantityByProduct.get(item.productId) ?? 0) > product.stock_quantity) {
       return {
         response: badRequest(
           buildInsufficientStockMessage(product.name, product.stock_quantity),
@@ -678,7 +734,12 @@ export async function POST(request: Request) {
     return badRequest("Cart cannot be empty");
   }
 
-  const requestHash = buildCheckoutRequestHash(parsed.data);
+  const normalizedRequestedItems = normalizeRequestedCheckoutItems(parsed.data.items);
+  const normalizedCheckoutPayload = {
+    customer: parsed.data.customer,
+    items: normalizedRequestedItems,
+  };
+  const requestHash = buildCheckoutRequestHash(normalizedCheckoutPayload);
   const idempotencyLookupStartedAt = startTiming();
   const existingAttempt = await getStoredCheckoutAttempt(idempotencyKey);
   recordTiming(timings, "checkout_idempotency_lookup", idempotencyLookupStartedAt);
@@ -700,7 +761,7 @@ export async function POST(request: Request) {
   }
 
   const canonicalItemsStartedAt = startTiming();
-  const canonical = await loadCanonicalItems(parsed.data.items);
+  const canonical = await loadCanonicalItems(normalizedRequestedItems);
   recordTiming(timings, "checkout_load_items", canonicalItemsStartedAt);
   if (canonical.response) {
     recordTiming(timings, "checkout_total", checkoutStartedAt);

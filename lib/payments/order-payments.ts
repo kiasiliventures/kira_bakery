@@ -29,6 +29,11 @@ type OrderPaymentRow = {
   payment_redirect_url: string | null;
   paid_at: string | null;
   order_tracking_id: string | null;
+  fulfillment_review_required: boolean | null;
+  fulfillment_review_reason: string | null;
+  inventory_conflict: boolean | null;
+  inventory_deduction_status: string | null;
+  inventory_deduction_attempted_at: string | null;
   created_at: string;
   order_items?: OrderPaymentItemRow[] | null;
 };
@@ -51,6 +56,15 @@ type PaymentAttemptRecordInput = {
   rawProviderResponse?: unknown;
   createdAt?: string;
   verifiedAt?: string | null;
+};
+
+type InventoryDeductionAttemptResult = {
+  inventory_deduction_status?: string | null;
+  fulfillment_review_required?: boolean | null;
+  fulfillment_review_reason?: string | null;
+  inventory_conflict?: boolean | null;
+  reserved_item_count?: number | null;
+  conflicted_item_count?: number | null;
 };
 
 export type PaymentViewState = "success" | "failed" | "cancelled" | "pending";
@@ -141,6 +155,11 @@ const ORDER_PAYMENT_SELECTION = [
   "payment_redirect_url",
   "paid_at",
   "order_tracking_id",
+  "fulfillment_review_required",
+  "fulfillment_review_reason",
+  "inventory_conflict",
+  "inventory_deduction_status",
+  "inventory_deduction_attempted_at",
   "created_at",
   "order_items(name,quantity,selected_size,selected_flavor)",
 ].join(",");
@@ -282,6 +301,16 @@ function hasCanonicalPaymentFieldsChanged(previous: OrderPaymentRow, next: Order
   );
 }
 
+function hasInventoryFulfillmentStateChanged(previous: OrderPaymentRow, next: OrderPaymentRow) {
+  return (
+    previous.fulfillment_review_required !== next.fulfillment_review_required
+    || previous.fulfillment_review_reason !== next.fulfillment_review_reason
+    || previous.inventory_conflict !== next.inventory_conflict
+    || previous.inventory_deduction_status !== next.inventory_deduction_status
+    || previous.inventory_deduction_attempted_at !== next.inventory_deduction_attempted_at
+  );
+}
+
 async function upsertPaymentAttempt(input: PaymentAttemptRecordInput) {
   const supabase = getSupabaseServerClient();
   const { error } = await supabase
@@ -352,6 +381,17 @@ function resolveStoredOrderAmount(row: OrderPaymentRow) {
   return Math.round(Number(row.total_ugx ?? row.total_price ?? 0));
 }
 
+function shouldAttemptPaidOrderInventoryDeduction(row: OrderPaymentRow) {
+  const deductionStatus = row.inventory_deduction_status?.trim().toLowerCase();
+
+  return (
+    deductionStatus !== "completed"
+    && deductionStatus !== "partial_conflict"
+    && deductionStatus !== "conflict"
+    && deductionStatus !== "review_required"
+  );
+}
+
 function assertOrderAccess(row: OrderPaymentRow, accessToken?: string | null) {
   if (!accessToken || accessToken !== row.order_access_token) {
     throw new OrderAccessDeniedError();
@@ -364,9 +404,19 @@ function buildAuthorityMessage(input: {
   justBecamePaid: boolean;
   wasAlreadyPaid: boolean;
   verificationState: PaymentStatus;
+  reviewRequired?: boolean;
+  inventoryConflict?: boolean;
 }) {
   if (!input.ok) {
     return "Payment amount verification failed. Order held for review.";
+  }
+
+  if (input.reviewRequired) {
+    if (input.inventoryConflict) {
+      return "Payment verified and paid transition persisted. Fulfillment review required due to stock conflict.";
+    }
+
+    return "Payment verified and paid transition persisted. Fulfillment review is required.";
   }
 
   if (input.justBecamePaid) {
@@ -440,8 +490,46 @@ function buildAuthorityResult(input: {
       justBecamePaid: input.justBecamePaid,
       wasAlreadyPaid: input.wasAlreadyPaid,
       verificationState,
+      reviewRequired: Boolean(input.row.fulfillment_review_required),
+      inventoryConflict: Boolean(input.row.inventory_conflict),
     }),
   };
+}
+
+async function attemptPaidOrderInventoryDeduction(
+  orderId: string,
+): Promise<InventoryDeductionAttemptResult | null> {
+  const supabase = getSupabaseServerClient();
+  const { data, error } = await supabase.rpc("attempt_paid_order_inventory_deduction", {
+    p_order_id: orderId,
+  });
+
+  if (error) {
+    console.error("order_inventory_deduction_rpc_failed", {
+      orderId,
+      error: error.message,
+    });
+    throw new Error("Unable to complete paid-order inventory deduction.");
+  }
+
+  if (Array.isArray(data)) {
+    return (data[0] as InventoryDeductionAttemptResult | null) ?? null;
+  }
+
+  return (data as InventoryDeductionAttemptResult | null) ?? null;
+}
+
+async function markOrderFulfillmentReviewRequired(
+  orderId: string,
+  reason: string,
+): Promise<OrderPaymentRow | null> {
+  return updateOrderPaymentRow(orderId, {
+    fulfillment_review_required: true,
+    fulfillment_review_reason: reason,
+    inventory_conflict: reason.includes("conflict"),
+    inventory_deduction_status: "review_required",
+    inventory_deduction_attempted_at: new Date().toISOString(),
+  });
 }
 
 async function persistVerifiedPaymentResult(input: {
@@ -811,20 +899,62 @@ export async function verifyOrderPaymentAuthority(
     verified: verifiedPayment,
     nextPaymentStatus,
   });
-  const finalPaymentStatus = normalizeStoredPaymentStatus(persisted.row.payment_status);
+  let finalRow = persisted.row;
+  let updated = persisted.updated;
+  let finalPaymentStatus = normalizeStoredPaymentStatus(finalRow.payment_status);
 
   await upsertPaymentAttempt({
-    orderId: persisted.row.id,
+    orderId: finalRow.id,
     provider: status.provider,
     providerReference: status.providerReference,
     amount: receivedAmount ?? expectedAmount,
     currency,
     status: finalPaymentStatus,
-    redirectUrl: persisted.row.payment_redirect_url,
+    redirectUrl: finalRow.payment_redirect_url,
     rawProviderResponse: status.rawResponse,
-    createdAt: persisted.row.created_at,
-    verifiedAt: persisted.row.paid_at ?? status.verifiedAt,
+    createdAt: finalRow.created_at,
+    verifiedAt: finalRow.paid_at ?? status.verifiedAt,
   });
+
+  if (finalPaymentStatus === "paid" && shouldAttemptPaidOrderInventoryDeduction(finalRow)) {
+    try {
+      const deductionResult = await attemptPaidOrderInventoryDeduction(finalRow.id);
+      console.info("order_payment_inventory_deduction_result", {
+        orderId,
+        source: options.source,
+        justBecamePaid: persisted.justBecamePaid,
+        inventoryDeductionStatus: deductionResult?.inventory_deduction_status ?? null,
+        reviewRequired: deductionResult?.fulfillment_review_required ?? null,
+        inventoryConflict: deductionResult?.inventory_conflict ?? null,
+        reservedItemCount: deductionResult?.reserved_item_count ?? null,
+        conflictedItemCount: deductionResult?.conflicted_item_count ?? null,
+      });
+
+      const refreshedRow = await getOrderPaymentRow(finalRow.id);
+      if (refreshedRow) {
+        updated = updated || hasInventoryFulfillmentStateChanged(finalRow, refreshedRow);
+        finalRow = refreshedRow;
+        finalPaymentStatus = normalizeStoredPaymentStatus(finalRow.payment_status);
+      }
+    } catch (inventoryError) {
+      console.error("order_payment_inventory_deduction_failed", {
+        orderId,
+        source: options.source,
+        error: inventoryError instanceof Error ? inventoryError.message : "unknown error",
+      });
+
+      const reviewRow = await markOrderFulfillmentReviewRequired(
+        finalRow.id,
+        "Inventory deduction failed after payment settlement. Manual review required.",
+      );
+
+      if (reviewRow) {
+        updated = updated || hasInventoryFulfillmentStateChanged(finalRow, reviewRow);
+        finalRow = reviewRow;
+        finalPaymentStatus = normalizeStoredPaymentStatus(finalRow.payment_status);
+      }
+    }
+  }
 
   console.info("order_payment_authority_success", {
     orderId,
@@ -835,12 +965,15 @@ export async function verifyOrderPaymentAuthority(
     providerStatus: status.providerStatus,
     stickyPaid,
     justBecamePaid: persisted.justBecamePaid,
+    reviewRequired: finalRow.fulfillment_review_required,
+    inventoryConflict: finalRow.inventory_conflict,
+    inventoryDeductionStatus: finalRow.inventory_deduction_status,
     durationMs: providerVerificationDurationMs,
   });
 
   return buildAuthorityResult({
     ok: true,
-    row: persisted.row,
+    row: finalRow,
     provider: status.provider,
     providerStatus: status.providerStatus,
     stickyPaid,
@@ -851,7 +984,7 @@ export async function verifyOrderPaymentAuthority(
     amountReceived: receivedAmount,
     currency,
     paymentReference: status.paymentReference,
-    updated: persisted.updated,
+    updated,
     snapshotVerified: true,
   });
 }

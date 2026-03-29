@@ -2,6 +2,7 @@ import "server-only";
 
 import { unstable_cache } from "next/cache";
 import { logSecurityEvent } from "@/lib/observability/security-events";
+import { createOrderAccessLinkToken } from "@/lib/payments/order-access-link";
 import { normalizeOrderStatusLabel } from "@/lib/orders/status";
 import { getPaymentProvider, parsePaymentProviderName, type PaymentProviderName } from "@/lib/payments/config";
 import {
@@ -692,6 +693,10 @@ export async function initiateOrderPaymentForOrder(
     currency: "UGX",
     description: buildOrderDescription(row.id),
     customerName: row.customer_name,
+    orderAccessLinkToken: createOrderAccessLinkToken({
+      orderId: row.id,
+      accessToken: row.order_access_token,
+    }),
     phone: row.customer_phone ?? row.phone,
     email: row.customer_email ?? row.email,
     requestOrigin: options?.requestOrigin,

@@ -23,6 +23,7 @@ export type PaymentInitiationInput = {
   currency: string;
   description: string;
   customerName: string;
+  orderAccessLinkToken?: string | null;
   phone?: string | null;
   email?: string | null;
   requestOrigin?: string | null;

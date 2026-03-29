@@ -86,6 +86,7 @@ export function PaymentResultView() {
   const hasClearedCartRef = useRef(false);
 
   const orderId = searchParams.get("orderId");
+  const orderAccessLinkToken = searchParams.get("access");
   const hint = searchParams.get("hint") === "cancelled" || searchParams.get("cancelled") === "1"
     ? "cancelled"
     : null;
@@ -98,11 +99,14 @@ export function PaymentResultView() {
       orderId,
       refresh: "1",
     });
+    if (orderAccessLinkToken) {
+      params.set("access", orderAccessLinkToken);
+    }
     if (hint) {
       params.set("hint", hint);
     }
     return `/api/payments/pesapal/status?${params.toString()}`;
-  }, [hint, orderId]);
+  }, [hint, orderAccessLinkToken, orderId]);
 
   useEffect(() => {
     let cancelled = false;

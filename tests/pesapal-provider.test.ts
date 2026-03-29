@@ -109,6 +109,7 @@ describe("Pesapal provider", () => {
       amountUGX: 12000,
       description: "Kira Bakery order order-123",
       customerName: "Jane Mary Doe",
+      orderAccessLinkToken: "signed-order-access-token",
       phone: "+256 700 000000",
       email: " jane@example.com ",
       requestOrigin: "https://kira-bakery.example.com",
@@ -130,8 +131,6 @@ describe("Pesapal provider", () => {
       amount: 12000,
       description: "Kira Bakery order order-123",
       redirect_mode: "TOP_WINDOW",
-      callback_url: "https://kira-bakery.example.com/payment/result?orderId=order-123",
-      cancellation_url: "https://kira-bakery.example.com/payment/result?orderId=order-123&cancelled=1",
       notification_id: "ipn-123",
       billing_address: {
         email_address: "jane@example.com",
@@ -141,6 +140,17 @@ describe("Pesapal provider", () => {
         last_name: "Doe",
       },
     });
+
+    const callbackUrl = new URL(submitPayload.callback_url);
+    expect(callbackUrl.origin + callbackUrl.pathname).toBe("https://kira-bakery.example.com/payment/result");
+    expect(callbackUrl.searchParams.get("orderId")).toBe("order-123");
+    expect(callbackUrl.searchParams.get("access")).toBeTruthy();
+
+    const cancellationUrl = new URL(submitPayload.cancellation_url);
+    expect(cancellationUrl.origin + cancellationUrl.pathname).toBe("https://kira-bakery.example.com/payment/result");
+    expect(cancellationUrl.searchParams.get("orderId")).toBe("order-123");
+    expect(cancellationUrl.searchParams.get("cancelled")).toBe("1");
+    expect(cancellationUrl.searchParams.get("access")).toBeTruthy();
   });
 
   it("warns when a public request origin is still using the Pesapal sandbox endpoint", async () => {

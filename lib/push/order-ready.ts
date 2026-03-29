@@ -1,5 +1,6 @@
 import "server-only";
 
+import { createOrderAccessLinkToken } from "@/lib/payments/order-access-link";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import {
   isStalePushSubscriptionError,
@@ -12,6 +13,7 @@ type ReadyTriggerSource = "admin_order_status_patch";
 type OrderReadyRow = {
   id: string;
   customer_id: string | null;
+  order_access_token: string | null;
   status: string | null;
   order_status: string | null;
   updated_at: string;
@@ -49,19 +51,32 @@ function isReadyOrder(row: Pick<OrderReadyRow, "status" | "order_status">) {
   );
 }
 
-function buildOrderUrl(order: Pick<OrderReadyRow, "id" | "customer_id">) {
+function buildOrderUrl(order: Pick<OrderReadyRow, "id" | "customer_id" | "order_access_token">) {
   if (order.customer_id) {
     return "/account/orders";
   }
 
-  return `/payment/result?orderId=${encodeURIComponent(order.id)}`;
+  const params = new URLSearchParams({
+    orderId: order.id,
+  });
+  if (order.order_access_token) {
+    params.set(
+      "access",
+      createOrderAccessLinkToken({
+        orderId: order.id,
+        accessToken: order.order_access_token,
+      }),
+    );
+  }
+
+  return `/payment/result?${params.toString()}`;
 }
 
 async function getOrderForReadyPush(orderId: string) {
   const supabase = getSupabaseServerClient();
   const { data, error } = await supabase
     .from("orders")
-    .select("id,customer_id,status,order_status,updated_at")
+    .select("id,customer_id,order_access_token,status,order_status,updated_at")
     .eq("id", orderId)
     .maybeSingle();
 

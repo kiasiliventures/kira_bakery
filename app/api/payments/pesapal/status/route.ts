@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
-import { getOrderAccessCookie } from "@/lib/payments/order-access-cookie";
+import { getOrderAccessCookie, setOrderAccessCookie } from "@/lib/payments/order-access-cookie";
+import { verifyOrderAccessLinkToken } from "@/lib/payments/order-access-link";
 import { logSecurityEvent } from "@/lib/observability/security-events";
 import {
+  getOrderAccessToken,
   getOrderPaymentSnapshot,
   isOrderAccessDeniedError,
 } from "@/lib/payments/order-payments";
@@ -33,13 +35,43 @@ export async function GET(request: Request) {
 
   const { searchParams } = new URL(request.url);
   const orderId = searchParams.get("orderId")?.trim();
+  const orderAccessLinkToken = searchParams.get("access")?.trim();
   const hint = searchParams.get("hint") === "cancelled" ? "cancelled" : undefined;
   const refresh = searchParams.get("refresh") !== "0";
 
   if (!orderId) {
     return NextResponse.json({ message: "Missing orderId." }, { status: 400 });
   }
-  const accessToken = await getOrderAccessCookie(orderId);
+  let accessToken = await getOrderAccessCookie(orderId);
+  let shouldRefreshOrderAccessCookie = false;
+
+  if (!accessToken && orderAccessLinkToken) {
+    const storedOrderAccessToken = await getOrderAccessToken(orderId);
+    if (
+      storedOrderAccessToken
+      && verifyOrderAccessLinkToken({
+        token: orderAccessLinkToken,
+        orderId,
+        accessToken: storedOrderAccessToken,
+      })
+    ) {
+      accessToken = storedOrderAccessToken;
+      shouldRefreshOrderAccessCookie = true;
+    } else {
+      logSecurityEvent({
+        event: "payment_status_invalid_access_link",
+        severity: "warning",
+        request,
+        details: {
+          orderId,
+        },
+        report: {
+          thresholds: [3, 5, 10],
+        },
+      });
+    }
+  }
+
   if (!accessToken) {
     logSecurityEvent({
       event: "payment_status_missing_access_session",
@@ -68,7 +100,11 @@ export async function GET(request: Request) {
       accessToken,
       requireAccessToken: true,
     });
-    return NextResponse.json({ ok: true, order: snapshot });
+    const response = NextResponse.json({ ok: true, order: snapshot });
+    if (shouldRefreshOrderAccessCookie) {
+      setOrderAccessCookie(response, orderId, accessToken);
+    }
+    return response;
   } catch (error) {
     if (isOrderAccessDeniedError(error)) {
       logSecurityEvent({

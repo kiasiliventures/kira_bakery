@@ -111,7 +111,9 @@ export function EnableOrderNotifications({
 
       const existingRegistration = await navigator.serviceWorker.getRegistration();
       const registration = existingRegistration
-        ?? await navigator.serviceWorker.register("/sw.js");
+        ?? await navigator.serviceWorker.register("/sw.js", {
+          updateViaCache: "none",
+        });
 
       await navigator.serviceWorker.ready;
 

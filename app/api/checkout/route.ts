@@ -22,6 +22,7 @@ type SharedCheckoutProductRow = {
   base_price: string | number;
   stock_quantity: number;
   is_available: boolean;
+  is_published: boolean;
 };
 
 type LegacyCheckoutProductRow = {
@@ -378,7 +379,7 @@ async function loadCanonicalItems(
 
   const shared = await supabase
     .from("products")
-    .select("id,name,image_url,base_price,stock_quantity,is_available")
+    .select("id,name,image_url,base_price,stock_quantity,is_available,is_published")
     .in("id", productIds);
 
   if (shared.error?.code === "42703") {
@@ -484,7 +485,7 @@ async function loadCanonicalItems(
     if (!product) {
       return { response: badRequest("One or more cart items no longer exist.") };
     }
-    if (!product.is_available || product.stock_quantity <= 0) {
+    if (!product.is_published || !product.is_available || product.stock_quantity <= 0) {
       return { response: badRequest(`${product.name} is unavailable.`) };
     }
     if ((requestedQuantityByProduct.get(item.productId) ?? 0) > product.stock_quantity) {

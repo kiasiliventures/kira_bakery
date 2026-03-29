@@ -35,6 +35,7 @@ export async function GET(request: Request) {
     || requestUrl.searchParams.get("OrderMerchantReference")?.trim();
   const orderTrackingId = requestUrl.searchParams.get("OrderTrackingId")?.trim();
   const cancelled = requestUrl.searchParams.get("cancelled") === "1";
+  const orderAccessLinkToken = requestUrl.searchParams.get("access")?.trim();
 
   console.info("pesapal_callback_received", {
     orderId: orderId ?? null,
@@ -89,6 +90,9 @@ export async function GET(request: Request) {
   const resultUrl = new URL("/payment/result", request.url);
   if (orderId) {
     resultUrl.searchParams.set("orderId", orderId);
+  }
+  if (orderAccessLinkToken) {
+    resultUrl.searchParams.set("access", orderAccessLinkToken);
   }
   if (cancelled) {
     resultUrl.searchParams.set("hint", "cancelled");

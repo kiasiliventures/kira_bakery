@@ -56,6 +56,7 @@ export type PesapalSubmitOrderInput = {
   amountUGX: number;
   description: string;
   customerName: string;
+  orderAccessLinkToken?: string | null;
   phone?: string | null;
   email?: string | null;
   requestOrigin?: string | null;
@@ -252,6 +253,7 @@ function getConfiguredOrRuntimeUrl(
 
 function getCallbackUrl(
   orderId: string,
+  orderAccessLinkToken?: string | null,
   requestOrigin?: string | null,
 ) {
   const url = new URL(
@@ -262,11 +264,15 @@ function getCallbackUrl(
     ),
   );
   url.searchParams.set("orderId", orderId);
+  if (orderAccessLinkToken) {
+    url.searchParams.set("access", orderAccessLinkToken);
+  }
   return url.toString();
 }
 
 function getCancellationUrl(
   orderId: string,
+  orderAccessLinkToken?: string | null,
   requestOrigin?: string | null,
 ) {
   const url = new URL(
@@ -277,6 +283,9 @@ function getCancellationUrl(
     ),
   );
   url.searchParams.set("orderId", orderId);
+  if (orderAccessLinkToken) {
+    url.searchParams.set("access", orderAccessLinkToken);
+  }
   url.searchParams.set("cancelled", "1");
   return url.toString();
 }
@@ -505,8 +514,16 @@ export async function submitPesapalOrderRequest(
   logPesapalEnvironmentWarning(input.requestOrigin);
   const notificationId = await ensurePesapalIpnId(input.requestOrigin);
   const { firstName, lastName } = splitCustomerName(input.customerName);
-  const callbackUrl = getCallbackUrl(normalizedInput.orderId, input.requestOrigin);
-  const cancellationUrl = getCancellationUrl(normalizedInput.orderId, input.requestOrigin);
+  const callbackUrl = getCallbackUrl(
+    normalizedInput.orderId,
+    input.orderAccessLinkToken,
+    input.requestOrigin,
+  );
+  const cancellationUrl = getCancellationUrl(
+    normalizedInput.orderId,
+    input.orderAccessLinkToken,
+    input.requestOrigin,
+  );
 
   const payload = {
     id: normalizedInput.orderId,

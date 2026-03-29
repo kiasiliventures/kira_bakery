@@ -189,6 +189,55 @@ function buildStockValidationSupabaseClient() {
                     base_price: 4500,
                     stock_quantity: 5,
                     is_available: true,
+                    is_published: true,
+                  },
+                ],
+                error: null,
+              }),
+            };
+          },
+        };
+      }
+
+      throw new Error(`Unexpected table access in test: ${table}`);
+    },
+  };
+}
+
+function buildUnpublishedProductSupabaseClient() {
+  return {
+    from(table: string) {
+      if (table === "api_idempotency_keys") {
+        return {
+          select() {
+            return {
+              eq() {
+                return {
+                  maybeSingle: async () => ({
+                    data: null,
+                    error: null,
+                  }),
+                };
+              },
+            };
+          },
+        };
+      }
+
+      if (table === "products") {
+        return {
+          select() {
+            return {
+              in: async () => ({
+                data: [
+                  {
+                    id: "product-1",
+                    name: "Secret Cake",
+                    image_url: "/secret-cake.jpg",
+                    base_price: 45000,
+                    stock_quantity: 5,
+                    is_available: true,
+                    is_published: false,
                   },
                 ],
                 error: null,
@@ -378,6 +427,47 @@ describe("checkout route regression tests", () => {
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({
       message: "Only 5 pieces of Milk Bread are left.",
+    });
+    expect(setOrderAccessCookieMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects unpublished products even when they are in stock", async () => {
+    getSupabaseServerClientMock.mockReturnValue(buildUnpublishedProductSupabaseClient());
+
+    const { POST } = await import("@/app/api/checkout/route");
+
+    const response = await POST(
+      new Request("https://example.com/api/checkout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": "checkout-key-5",
+          "X-Checkout-Session": "session-token",
+          Origin: "https://example.com",
+        },
+        body: JSON.stringify({
+          customer: {
+            deliveryMethod: "pickup",
+            customerName: "Jane Doe",
+            phone: "+256700000000",
+            email: "",
+            address: "",
+            deliveryDate: "",
+            notes: "",
+          },
+          items: [
+            {
+              productId: "product-1",
+              quantity: 1,
+            },
+          ],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      message: "Secret Cake is unavailable.",
     });
     expect(setOrderAccessCookieMock).not.toHaveBeenCalled();
   });

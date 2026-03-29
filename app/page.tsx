@@ -28,7 +28,7 @@ export default async function HomePage() {
               KiRA Bakery
             </h1>
             <p className="max-w-lg text-lg text-[#f4e7da]">
-              Deliciously Baked, Fresh Daily
+              Freshly Baked Everyday
             </p>
             <div className="flex flex-wrap gap-3">
               <Link

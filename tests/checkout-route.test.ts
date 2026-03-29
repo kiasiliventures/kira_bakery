@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { getCheckoutMinimumDateValue } from "@/lib/validation";
 
 const validateSameOriginMutationMock = vi.fn();
 const enforceRateLimitMock = vi.fn();
@@ -122,6 +123,13 @@ function normalizeCheckoutPayload(payload: ReturnType<typeof buildValidPayload>)
 
 function buildSessionBindingHash(sessionToken: string) {
   return createHash("sha256").update(sessionToken).digest("hex");
+}
+
+function shiftCheckoutDateValue(dateValue: string, offsetDays: number) {
+  const [year, month, day] = dateValue.split("-").map(Number);
+  const utcDate = new Date(Date.UTC(year, month - 1, day));
+  utcDate.setUTCDate(utcDate.getUTCDate() + offsetDays);
+  return utcDate.toISOString().slice(0, 10);
 }
 
 function buildValidPayload() {
@@ -538,6 +546,80 @@ describe("checkout route regression tests", () => {
     await expect(response.json()).resolves.toEqual({
       message: "Secret Cake is unavailable.",
     });
+    expect(setOrderAccessCookieMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects delivery dates in the past before any order can be created", async () => {
+    const pastDeliveryDate = shiftCheckoutDateValue(getCheckoutMinimumDateValue(), -1);
+
+    getSupabaseServerClientMock.mockReturnValue(
+      buildCheckoutValidationOnlySupabaseClient({
+        productsData: [
+          {
+            id: "product-1",
+            name: "Milk Bread",
+            image_url: "/bread.jpg",
+            base_price: 4500,
+            stock_quantity: 5,
+            is_available: true,
+            is_published: true,
+          },
+        ],
+      }),
+    );
+
+    const { POST } = await import("@/app/api/checkout/route");
+
+    const response = await POST(
+      new Request("https://example.com/api/checkout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": "checkout-key-5b",
+          "X-Checkout-Session": "session-token",
+          Origin: "https://example.com",
+        },
+        body: JSON.stringify({
+          customer: {
+            deliveryMethod: "delivery",
+            customerName: "Jane Doe",
+            phone: "+256700000000",
+            email: "",
+            address: "Kira Town, Uganda",
+            deliveryDate: pastDeliveryDate,
+            notes: "",
+            deliveryLocation: {
+              placeId: "place-1",
+              addressText: "Kira Town, Uganda",
+              latitude: 0.4,
+              longitude: 32.6,
+            },
+            deliveryQuoteToken: "quote-token",
+          },
+          items: [
+            {
+              productId: "product-1",
+              quantity: 1,
+            },
+          ],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual(
+      expect.objectContaining({
+        message: "Invalid checkout payload",
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            message: "Choose today or a future date",
+            path: ["customer", "deliveryDate"],
+          }),
+        ]),
+      }),
+    );
+    expect(getSupabaseServerClientMock).not.toHaveBeenCalled();
+    expect(initiateOrderPaymentForOrderMock).not.toHaveBeenCalled();
     expect(setOrderAccessCookieMock).not.toHaveBeenCalled();
   });
 

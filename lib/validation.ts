@@ -5,6 +5,8 @@ const CHECKOUT_ADDRESS_MAX_LENGTH = 240;
 const CHECKOUT_LOCATION_FIELD_MAX_LENGTH = 240;
 const CHECKOUT_DELIVERY_QUOTE_TOKEN_MAX_LENGTH = 1_024;
 const CHECKOUT_OPTIONAL_NOTES_MAX_LENGTH = 300;
+const CHECKOUT_BUSINESS_TIME_ZONE = "Africa/Kampala";
+const CHECKOUT_PAST_DATE_MESSAGE = "Choose today or a future date";
 
 function emptyStringToUndefined(value: unknown) {
   if (typeof value === "string" && value.trim().length === 0) {
@@ -16,6 +18,47 @@ function emptyStringToUndefined(value: unknown) {
 
 function optionalTextFieldWithMax(maxLength: number, message: string) {
   return z.string().max(maxLength, message).optional().or(z.literal(""));
+}
+
+function formatDateInCheckoutTimeZone(referenceDate = new Date()) {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: CHECKOUT_BUSINESS_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const parts = formatter.formatToParts(referenceDate);
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+
+  if (!year || !month || !day) {
+    throw new Error("Unable to format the checkout date.");
+  }
+
+  return `${year}-${month}-${day}`;
+}
+
+function isValidCheckoutDateValue(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) {
+    return false;
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const utcDate = new Date(Date.UTC(year, month - 1, day));
+
+  return (
+    utcDate.getUTCFullYear() === year
+    && utcDate.getUTCMonth() === month - 1
+    && utcDate.getUTCDate() === day
+  );
+}
+
+export function getCheckoutMinimumDateValue(referenceDate = new Date()) {
+  return formatDateInCheckoutTimeZone(referenceDate);
 }
 
 const optionalFiniteNumber = z.preprocess(
@@ -70,6 +113,23 @@ export const checkoutSchema = z
     ),
   })
   .superRefine((data, ctx) => {
+    const deliveryDate = data.deliveryDate?.trim();
+    if (deliveryDate) {
+      if (!isValidCheckoutDateValue(deliveryDate)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["deliveryDate"],
+          message: "Use a valid delivery date",
+        });
+      } else if (deliveryDate < getCheckoutMinimumDateValue()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["deliveryDate"],
+          message: CHECKOUT_PAST_DATE_MESSAGE,
+        });
+      }
+    }
+
     if (data.deliveryMethod === "delivery") {
       if (!data.address || data.address.trim().length < 5) {
         ctx.addIssue({

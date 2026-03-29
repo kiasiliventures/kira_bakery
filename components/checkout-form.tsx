@@ -12,7 +12,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { STORAGE_KEYS } from "@/lib/constants";
 import { formatDistanceKm, formatUGX } from "@/lib/format";
 import type { DeliveryQuote, DeliveryResolvedLocation } from "@/lib/delivery/types";
-import { checkoutSchema, type CheckoutSchemaInput } from "@/lib/validation";
+import {
+  checkoutSchema,
+  getCheckoutMinimumDateValue,
+  type CheckoutSchemaInput,
+} from "@/lib/validation";
 
 type CheckoutFormProps = {
   compact?: boolean;
@@ -36,6 +40,7 @@ function getOrCreateCheckoutSessionToken() {
 export function CheckoutForm({ compact = false }: CheckoutFormProps) {
   const router = useRouter();
   const { items, subtotalUGX } = useCart();
+  const minimumDeliveryDate = getCheckoutMinimumDateValue();
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [deliveryLocation, setDeliveryLocation] = useState<DeliveryResolvedLocation | null>(null);
@@ -250,6 +255,7 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
           id="deliveryDate"
           name="deliveryDate"
           type="date"
+          min={minimumDeliveryDate}
           onChange={() => clearFieldError("deliveryDate")}
         />
         {errors.deliveryDate && <p className="text-xs text-danger">{errors.deliveryDate}</p>}

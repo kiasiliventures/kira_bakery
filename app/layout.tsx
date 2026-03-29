@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Noto_Serif } from "next/font/google";
 import { Analytics } from "@vercel/analytics/react";
+import { SpeedInsights } from "@vercel/speed-insights/next";
 import { PortraitOrientationHint } from "@/components/portrait-orientation-hint";
 import { AuthProvider } from "@/components/providers/auth-provider";
 import { AppProvider } from "@/components/providers/app-provider";
@@ -105,6 +106,7 @@ export default function RootLayout({
             <main className="mx-auto w-full max-w-6xl px-4 py-8">{children}</main>
             <SiteFooter />
             <Analytics />
+            <SpeedInsights />
           </AppProvider>
         </AuthProvider>
       </body>

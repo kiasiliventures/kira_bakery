@@ -1,7 +1,7 @@
 {
   "name": "KiRA Bakery",
   "short_name": "KiRA Bakery",
-  "description": "Delicious baked fresh daily in Kira, Uganda.",
+  "description": "Freshly Baked Everyday",
   "start_url": "/",
   "display": "standalone",
   "orientation": "portrait-primary",

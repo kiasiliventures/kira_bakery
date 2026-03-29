@@ -35,7 +35,7 @@ const themeScript = `
 
 export const metadata: Metadata = {
   title: "KiRA Bakery",
-  description: "Delicious baked fresh daily in Kira, Uganda.",
+  description: "Freshly Baked Everyday",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,

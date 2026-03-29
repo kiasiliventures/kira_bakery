@@ -11,7 +11,7 @@ export default async function HomePage() {
     <div className="space-y-12">
       <section className="relative left-1/2 right-1/2 -mx-[50vw] min-h-[560px] w-screen overflow-hidden">
         <Image
-          src="/images/hero_image.png"
+          src="/images/hero_image_3.jpg"
           alt="Premium bakery bread and pastry display"
           fill
           priority

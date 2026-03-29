@@ -7,7 +7,7 @@ import {
   mapSharedProductRow,
 } from "@/lib/supabase/mappers";
 import { getSupabasePublicServerClient } from "@/lib/supabase/server";
-import type { Product, ProductCategory } from "@/types/product";
+import { PRODUCT_CATEGORIES, type Product, type ProductCategory } from "@/types/product";
 
 type SharedCatalogProductRow = {
   id: string;
@@ -21,7 +21,37 @@ type SharedCatalogProductRow = {
   categories?: { name: string } | { name: string }[] | null;
 };
 
-export const CATALOG_REVALIDATE_SECONDS = 300;
+export const CATALOG_REVALIDATE_SECONDS = 600;
+const KAMPALA_TIME_ZONE = "Africa/Kampala";
+const WEEK_IN_MS = 7 * 24 * 60 * 60 * 1000;
+
+const kampalaDateFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: KAMPALA_TIME_ZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+function getWeeklyRotationBucket(now = new Date()) {
+  const parts = kampalaDateFormatter.formatToParts(now);
+  const year = Number(parts.find((part) => part.type === "year")?.value);
+  const month = Number(parts.find((part) => part.type === "month")?.value);
+  const day = Number(parts.find((part) => part.type === "day")?.value);
+
+  const kampalaDate = new Date(Date.UTC(year, month - 1, day));
+  const dayOfWeek = kampalaDate.getUTCDay() || 7;
+  const thursday = new Date(kampalaDate);
+  thursday.setUTCDate(kampalaDate.getUTCDate() + (4 - dayOfWeek));
+
+  const weekYear = thursday.getUTCFullYear();
+  const firstThursday = new Date(Date.UTC(weekYear, 0, 4));
+  const firstDayOfWeek = firstThursday.getUTCDay() || 7;
+  firstThursday.setUTCDate(firstThursday.getUTCDate() + (4 - firstDayOfWeek));
+
+  const week = 1 + Math.floor((thursday.getTime() - firstThursday.getTime()) / WEEK_IN_MS);
+
+  return weekYear * 100 + week;
+}
 
 let lastKnownCatalogProducts: Product[] | null = null;
 const lastKnownCatalogProductsById = new Map<string, Product>();
@@ -193,7 +223,7 @@ export async function getCachedCatalogProductById(id: string): Promise<Product |
 export async function getCachedCategoryImages(): Promise<
   Partial<Record<ProductCategory, string>>
 > {
-  const images: Partial<Record<ProductCategory, string>> = {};
+  const result: Partial<Record<ProductCategory, string>> = {};
 
   let products: Product[];
   try {
@@ -203,14 +233,57 @@ export async function getCachedCategoryImages(): Promise<
       "catalog_category_images_failed",
       error instanceof Error ? error.message : error,
     );
-    return images;
+    return result;
   }
 
-  for (const product of products) {
-    if (!product.soldOut && product.image && !images[product.category]) {
-      images[product.category] = product.image;
+  const imagesByCategory = new Map<ProductCategory, Set<string>>();
+  const imageSortKeysByCategory = new Map<ProductCategory, Map<string, string>>();
+  const eligibleProducts = products
+    .filter((product) => !product.soldOut && product.image.trim().length > 0)
+    .sort(
+      (left, right) =>
+        left.name.localeCompare(right.name) || left.id.localeCompare(right.id),
+    );
+
+  for (const product of eligibleProducts) {
+    const image = product.image.trim();
+    const categoryImages = imagesByCategory.get(product.category) ?? new Set<string>();
+    const imageSortKeys = imageSortKeysByCategory.get(product.category) ?? new Map<string, string>();
+
+    if (!imagesByCategory.has(product.category)) {
+      imagesByCategory.set(product.category, categoryImages);
+    }
+
+    if (!imageSortKeysByCategory.has(product.category)) {
+      imageSortKeysByCategory.set(product.category, imageSortKeys);
+    }
+
+    categoryImages.add(image);
+
+    if (!imageSortKeys.has(image)) {
+      imageSortKeys.set(image, `${product.name}\u0000${product.id}`);
     }
   }
 
-  return images;
+  const bucket = getWeeklyRotationBucket();
+
+  for (const category of PRODUCT_CATEGORIES) {
+    const images = [...(imagesByCategory.get(category) ?? new Set<string>())].sort(
+      (left, right) => {
+        const sortKeys = imageSortKeysByCategory.get(category);
+        const leftKey = sortKeys?.get(left) ?? left;
+        const rightKey = sortKeys?.get(right) ?? right;
+
+        return leftKey.localeCompare(rightKey) || left.localeCompare(right);
+      },
+    );
+
+    if (images.length > 0) {
+      // Monday-based Kampala weeks keep each category image stable for the whole week,
+      // and modulo selection stays deterministic across cache revalidation windows.
+      result[category] = images[bucket % images.length];
+    }
+  }
+
+  return result;
 }

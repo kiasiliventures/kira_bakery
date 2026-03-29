@@ -169,7 +169,7 @@ async function loadActiveDeliveryPricingConfig(): Promise<DeliveryPricingConfig>
 const getCachedActiveDeliveryPricingConfig = unstable_cache(
   loadActiveDeliveryPricingConfig,
   ["active-delivery-pricing-config"],
-  { revalidate: 300 },
+  { revalidate: 600 },
 );
 
 function findMatchingBracket(

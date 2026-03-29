@@ -35,7 +35,7 @@ const cakeOptionSelection = "id,code,name,sort_order,is_active";
 const cakeTierOptionSelection = `${cakeOptionSelection},tier_count`;
 const cakePriceSelection =
   "id,flavour_id,shape_id,size_id,tier_option_id,topping_id,weight_kg,price_ugx,source_note,is_active,created_at,updated_at";
-const CAKE_BUILDER_REVALIDATE_SECONDS = 300;
+const CAKE_BUILDER_REVALIDATE_SECONDS = 600;
 
 function parseNumber(value: number | string) {
   return typeof value === "number" ? value : Number(value);

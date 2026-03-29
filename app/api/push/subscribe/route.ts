@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { validateSameOriginMutation } from "@/lib/http/same-origin";
 import { getOrderAccessCookie } from "@/lib/payments/order-access-cookie";
+import { enforceRateLimit } from "@/lib/rate-limit";
 import { getAuthenticatedUser, getSupabaseServerClient } from "@/lib/supabase/server";
 
 const pushSubscriptionSchema = z.object({
@@ -65,6 +67,7 @@ async function authorizeOrderLink(orderId: string, authenticatedUserId: string |
       return {
         ok: true as const,
         customerId: data.customer_id,
+        canLinkToCustomerId: true,
       };
     }
 
@@ -78,6 +81,7 @@ async function authorizeOrderLink(orderId: string, authenticatedUserId: string |
     return {
       ok: true as const,
       customerId: data.customer_id,
+      canLinkToCustomerId: false,
     };
   }
 
@@ -91,11 +95,29 @@ async function authorizeOrderLink(orderId: string, authenticatedUserId: string |
   return {
     ok: true as const,
     customerId: null,
+    canLinkToCustomerId: false,
   };
+}
+
+function tooManyRequests(retryAfterSeconds: number) {
+  return NextResponse.json(
+    { message: "Too many requests. Please wait and try again." },
+    { status: 429, headers: { "Retry-After": String(retryAfterSeconds) } },
+  );
 }
 
 export async function POST(request: Request) {
   try {
+    const sameOriginViolation = validateSameOriginMutation(request);
+    if (sameOriginViolation) {
+      return sameOriginViolation;
+    }
+
+    const routeRateLimit = await enforceRateLimit(request, "push-subscribe", 10, 60_000);
+    if (!routeRateLimit.allowed) {
+      return tooManyRequests(routeRateLimit.retryAfterSeconds);
+    }
+
     const body = await request.json().catch(() => null);
     const parsed = pushSubscriptionSchema.safeParse(body);
 
@@ -111,15 +133,27 @@ export async function POST(request: Request) {
 
     const authenticatedUser = await getAuthenticatedUser();
     const authenticatedUserId = authenticatedUser?.id ?? null;
-    let orderCustomerId: string | null = null;
+    let subscriptionUserId = authenticatedUserId;
 
     if (parsed.data.orderId) {
+      const orderRateLimit = await enforceRateLimit(
+        request,
+        `push-subscribe-order:${parsed.data.orderId}`,
+        6,
+        60_000,
+      );
+      if (!orderRateLimit.allowed) {
+        return tooManyRequests(orderRateLimit.retryAfterSeconds);
+      }
+
       const authorizedOrder = await authorizeOrderLink(parsed.data.orderId, authenticatedUserId);
       if (!authorizedOrder.ok) {
         return authorizedOrder.response;
       }
 
-      orderCustomerId = authorizedOrder.customerId;
+      subscriptionUserId = authorizedOrder.canLinkToCustomerId
+        ? authorizedOrder.customerId
+        : null;
     } else if (!authenticatedUserId) {
       return NextResponse.json(
         { message: "orderId is required when no authenticated user is present." },
@@ -135,7 +169,7 @@ export async function POST(request: Request) {
           endpoint: parsed.data.endpoint,
           p256dh: parsed.data.keys.p256dh,
           auth: parsed.data.keys.auth,
-          user_id: orderCustomerId ?? authenticatedUserId,
+          user_id: subscriptionUserId,
           platform: inferPlatform(request.headers.get("user-agent")),
           user_agent: request.headers.get("user-agent"),
         },

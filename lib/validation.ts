@@ -1,5 +1,11 @@
 import { z } from "zod";
 
+const CHECKOUT_CUSTOMER_NAME_MAX_LENGTH = 80;
+const CHECKOUT_ADDRESS_MAX_LENGTH = 240;
+const CHECKOUT_LOCATION_FIELD_MAX_LENGTH = 240;
+const CHECKOUT_DELIVERY_QUOTE_TOKEN_MAX_LENGTH = 1_024;
+const CHECKOUT_OPTIONAL_NOTES_MAX_LENGTH = 300;
+
 function emptyStringToUndefined(value: unknown) {
   if (typeof value === "string" && value.trim().length === 0) {
     return undefined;
@@ -8,15 +14,24 @@ function emptyStringToUndefined(value: unknown) {
   return value;
 }
 
-const optionalTextField = z.string().optional().or(z.literal(""));
+function optionalTextFieldWithMax(maxLength: number, message: string) {
+  return z.string().max(maxLength, message).optional().or(z.literal(""));
+}
+
 const optionalFiniteNumber = z.preprocess(
   emptyStringToUndefined,
   z.number().finite().optional(),
 );
 
 export const deliveryLocationSchema = z.object({
-  placeId: optionalTextField,
-  addressText: optionalTextField,
+  placeId: optionalTextFieldWithMax(
+    CHECKOUT_LOCATION_FIELD_MAX_LENGTH,
+    `Keep the delivery place identifier under ${CHECKOUT_LOCATION_FIELD_MAX_LENGTH} characters`,
+  ),
+  addressText: optionalTextFieldWithMax(
+    CHECKOUT_LOCATION_FIELD_MAX_LENGTH,
+    `Keep the delivery location under ${CHECKOUT_LOCATION_FIELD_MAX_LENGTH} characters`,
+  ),
   latitude: optionalFiniteNumber,
   longitude: optionalFiniteNumber,
 });
@@ -24,17 +39,35 @@ export const deliveryLocationSchema = z.object({
 export const checkoutSchema = z
   .object({
     deliveryMethod: z.enum(["delivery", "pickup"]),
-    customerName: z.string().min(2, "Name is required"),
+    customerName: z
+      .string()
+      .min(2, "Name is required")
+      .max(
+        CHECKOUT_CUSTOMER_NAME_MAX_LENGTH,
+        `Keep your name under ${CHECKOUT_CUSTOMER_NAME_MAX_LENGTH} characters`,
+      ),
     phone: z
       .string()
       .min(9, "Phone is required")
       .regex(/^\+?[0-9]{9,15}$/, "Use a valid phone number"),
     email: z.string().email("Use a valid email").optional().or(z.literal("")),
-    address: optionalTextField,
-    deliveryDate: optionalTextField,
-    notes: z.string().max(300, "Keep notes under 300 characters").optional(),
+    address: optionalTextFieldWithMax(
+      CHECKOUT_ADDRESS_MAX_LENGTH,
+      `Keep the address under ${CHECKOUT_ADDRESS_MAX_LENGTH} characters`,
+    ),
+    deliveryDate: optionalTextFieldWithMax(40, "Use a shorter delivery date value"),
+    notes: z
+      .string()
+      .max(
+        CHECKOUT_OPTIONAL_NOTES_MAX_LENGTH,
+        `Keep notes under ${CHECKOUT_OPTIONAL_NOTES_MAX_LENGTH} characters`,
+      )
+      .optional(),
     deliveryLocation: deliveryLocationSchema.optional(),
-    deliveryQuoteToken: optionalTextField,
+    deliveryQuoteToken: optionalTextFieldWithMax(
+      CHECKOUT_DELIVERY_QUOTE_TOKEN_MAX_LENGTH,
+      `Keep the delivery quote token under ${CHECKOUT_DELIVERY_QUOTE_TOKEN_MAX_LENGTH} characters`,
+    ),
   })
   .superRefine((data, ctx) => {
     if (data.deliveryMethod === "delivery") {
@@ -92,7 +125,7 @@ export const deliveryQuoteRequestSchema = z.object({
 
 export const deliveryAutocompleteRequestSchema = z.object({
   input: z.string().min(3, "Enter at least 3 characters"),
-  sessionToken: optionalTextField,
+  sessionToken: optionalTextFieldWithMax(200, "Keep the session token under 200 characters"),
 });
 
 export const cakeBuilderSchema = z

@@ -12,7 +12,10 @@ import {
   initiateOrderPaymentForOrder,
 } from "@/lib/payments/order-payments";
 import { enforceRateLimit } from "@/lib/rate-limit";
-import { getAuthenticatedUser, getSupabaseServerClient } from "@/lib/supabase/server";
+import {
+  getAuthenticatedUser,
+  getSupabaseServerClient as getCheckoutServiceRoleClient,
+} from "@/lib/supabase/server";
 import { checkoutSchema } from "@/lib/validation";
 
 type SharedCheckoutProductRow = {
@@ -23,29 +26,6 @@ type SharedCheckoutProductRow = {
   stock_quantity: number;
   is_available: boolean;
   is_published: boolean;
-};
-
-type LegacyCheckoutProductRow = {
-  id: string;
-  name: string;
-  image: string;
-  price_ugx: number;
-  sold_out: boolean;
-};
-
-type LegacyAdminVariantRow = {
-  name: string;
-  price: number;
-  is_available: boolean;
-  sort_order?: number | null;
-};
-
-type LegacyAdminProductRow = {
-  id: string;
-  name: string;
-  image_url: string | null;
-  is_available: boolean;
-  product_variants?: LegacyAdminVariantRow[] | null;
 };
 
 type CanonicalCheckoutItem = {
@@ -121,16 +101,39 @@ type GuestPlaceOrderRpcPayload = SharedPlaceOrderPayload & {
   order_status: "Pending";
 };
 
+const MAX_CHECKOUT_ITEMS = 25;
+const MAX_CHECKOUT_REQUEST_BODY_BYTES = 16_384;
+const MAX_CHECKOUT_OPTION_LENGTH = 80;
+const MAX_CHECKOUT_PRODUCT_ID_LENGTH = 128;
+
 const checkoutPayloadSchema = z.object({
   customer: checkoutSchema,
-  items: z.array(
-    z.object({
-      productId: z.string().min(1),
-      quantity: z.number().int().positive(),
-      selectedSize: z.string().optional(),
-      selectedFlavor: z.string().optional(),
-    }),
-  ),
+  items: z
+    .array(
+      z.object({
+        productId: z.string().min(1).max(
+          MAX_CHECKOUT_PRODUCT_ID_LENGTH,
+          `Keep product identifiers under ${MAX_CHECKOUT_PRODUCT_ID_LENGTH} characters`,
+        ),
+        quantity: z.number().int().positive().max(99, "Quantity is too large"),
+        selectedSize: z
+          .string()
+          .max(
+            MAX_CHECKOUT_OPTION_LENGTH,
+            `Keep selected size under ${MAX_CHECKOUT_OPTION_LENGTH} characters`,
+          )
+          .optional(),
+        selectedFlavor: z
+          .string()
+          .max(
+            MAX_CHECKOUT_OPTION_LENGTH,
+            `Keep selected flavor under ${MAX_CHECKOUT_OPTION_LENGTH} characters`,
+          )
+          .optional(),
+      }),
+    )
+    .min(1, "Cart cannot be empty")
+    .max(MAX_CHECKOUT_ITEMS, `Cart cannot contain more than ${MAX_CHECKOUT_ITEMS} items`),
 });
 
 function badRequest(message: string) {
@@ -174,6 +177,10 @@ function tooManyRequests(retryAfterSeconds: number) {
     { message: "Too many requests. Please wait and try again." },
     { status: 429, headers: { "Retry-After": String(retryAfterSeconds) } },
   );
+}
+
+function requestEntityTooLarge(message: string) {
+  return NextResponse.json({ message }, { status: 413 });
 }
 
 function getIdempotencyKey(request: Request) {
@@ -351,132 +358,28 @@ function buildPlaceOrderRpcPayload(input: {
   };
 }
 
-function selectLegacyVariant(
-  product: LegacyAdminProductRow,
-  selectedSize?: string,
-): LegacyAdminVariantRow | null {
-  const availableVariants = (product.product_variants ?? [])
-    .filter((variant) => variant.is_available)
-    .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
-
-  if (availableVariants.length === 0) {
-    return null;
-  }
-
-  if (!selectedSize) {
-    return availableVariants[0];
-  }
-
-  return availableVariants.find((variant) => variant.name === selectedSize) ?? availableVariants[0];
-}
-
 async function loadCanonicalItems(
   requestedItems: RequestedCheckoutItem[],
 ) {
-  const supabase = getSupabaseServerClient();
+  const supabase = getCheckoutServiceRoleClient();
   const productIds = [...new Set(requestedItems.map((item) => item.productId))];
   const requestedQuantityByProduct = buildRequestedQuantityByProduct(requestedItems);
 
-  const shared = await supabase
+  const sharedProducts = await supabase
     .from("products")
     .select("id,name,image_url,base_price,stock_quantity,is_available,is_published")
     .in("id", productIds);
 
-  if (shared.error?.code === "42703") {
-    const legacy = await supabase
-      .from("products")
-      .select("id,name,image,price_ugx,sold_out")
-      .in("id", productIds);
-
-    if (legacy.error?.code === "42703") {
-      const legacyAdmin = await supabase
-        .from("products")
-        .select(
-          "id,name,image_url,is_available,product_variants(name,price,is_available,sort_order)",
-        )
-        .in("id", productIds);
-
-      if (legacyAdmin.error) {
-        console.error("checkout_legacy_admin_product_lookup_failed", legacyAdmin.error.message);
-        return {
-          response: NextResponse.json({ message: "Unable to validate cart items." }, { status: 500 }),
-        };
-      }
-
-      const products = new Map(
-        ((legacyAdmin.data ?? []) as LegacyAdminProductRow[]).map((product) => [product.id, product]),
-      );
-
-      const canonicalItems: CanonicalCheckoutItem[] = [];
-
-      for (const item of requestedItems) {
-        const product = products.get(item.productId);
-        if (!product) {
-          return { response: badRequest("One or more cart items no longer exist.") };
-        }
-        if (!product.is_available) {
-          return { response: badRequest(`${product.name} is unavailable.`) };
-        }
-
-        const variant = selectLegacyVariant(product, item.selectedSize);
-        if (!variant) {
-          return { response: badRequest(`${product.name} has no valid price configured.`) };
-        }
-
-        canonicalItems.push({
-          productId: product.id,
-          name: product.name,
-          image: product.image_url ?? "",
-          priceUGX: Math.round(Number(variant.price)),
-          quantity: item.quantity,
-          selectedSize: item.selectedSize,
-          selectedFlavor: item.selectedFlavor,
-        });
-      }
-
-      return { items: canonicalItems };
-    }
-
-    if (legacy.error) {
-      console.error("checkout_legacy_product_lookup_failed", legacy.error.message);
-      return { response: NextResponse.json({ message: "Unable to validate cart items." }, { status: 500 }) };
-    }
-
-    const products = new Map(
-      ((legacy.data ?? []) as LegacyCheckoutProductRow[]).map((product) => [product.id, product]),
-    );
-    const canonicalItems: CanonicalCheckoutItem[] = [];
-
-    for (const item of requestedItems) {
-      const product = products.get(item.productId);
-      if (!product) {
-        return { response: badRequest("One or more cart items no longer exist.") };
-      }
-      if (product.sold_out) {
-        return { response: badRequest(`${product.name} is unavailable.`) };
-      }
-
-      canonicalItems.push({
-        productId: product.id,
-        name: product.name,
-        image: product.image,
-        priceUGX: product.price_ugx,
-        quantity: item.quantity,
-        selectedSize: item.selectedSize,
-        selectedFlavor: item.selectedFlavor,
-      });
-    }
-
-    return { items: canonicalItems };
-  }
-
-  if (shared.error) {
-    console.error("checkout_product_lookup_failed", shared.error.message);
+  if (sharedProducts.error) {
+    console.error("checkout_shared_product_lookup_failed", {
+      code: sharedProducts.error.code,
+      message: sharedProducts.error.message,
+    });
     return { response: NextResponse.json({ message: "Unable to validate cart items." }, { status: 500 }) };
   }
 
   const products = new Map(
-    ((shared.data ?? []) as SharedCheckoutProductRow[]).map((product) => [product.id, product]),
+    ((sharedProducts.data ?? []) as SharedCheckoutProductRow[]).map((product) => [product.id, product]),
   );
   const canonicalItems: CanonicalCheckoutItem[] = [];
 
@@ -511,7 +414,7 @@ async function loadCanonicalItems(
 }
 
 async function getStoredCheckoutAttempt(key: string) {
-  const supabase = getSupabaseServerClient();
+  const supabase = getCheckoutServiceRoleClient();
   const { data, error } = await supabase
     .from("api_idempotency_keys")
     .select("key,endpoint,request_hash,client_binding_hash,resource_id,response_status,response_body")
@@ -531,7 +434,7 @@ async function finalizeCheckoutAttempt(
   status: number,
   responseBody: StoredCheckoutResponse,
 ) {
-  const supabase = getSupabaseServerClient();
+  const supabase = getCheckoutServiceRoleClient();
   const { error } = await supabase
     .from("api_idempotency_keys")
     .update({
@@ -547,7 +450,7 @@ async function finalizeCheckoutAttempt(
 }
 
 async function releaseCheckoutAttempt(key: string) {
-  const supabase = getSupabaseServerClient();
+  const supabase = getCheckoutServiceRoleClient();
   const { error } = await supabase.from("api_idempotency_keys").delete().eq("key", key);
 
   if (error) {
@@ -718,8 +621,30 @@ export async function POST(request: Request) {
   const sessionBindingHash = buildCheckoutSessionBindingHash(checkoutSessionToken);
 
   const parseBodyStartedAt = startTiming();
-  const body = await request.json();
+  const rawBody = await request.text();
   recordTiming(timings, "checkout_parse_body", parseBodyStartedAt);
+  const bodySize = Buffer.byteLength(rawBody, "utf8");
+  if (bodySize > MAX_CHECKOUT_REQUEST_BODY_BYTES) {
+    const response = requestEntityTooLarge("Checkout payload is too large.");
+    recordTiming(timings, "checkout_total", checkoutStartedAt);
+    setServerTimingHeaders(response, timings);
+    return response;
+  }
+
+  let body: unknown;
+
+  try {
+    body = JSON.parse(rawBody);
+  } catch {
+    const response = NextResponse.json(
+      { message: "Invalid checkout payload" },
+      { status: 400 },
+    );
+    recordTiming(timings, "checkout_total", checkoutStartedAt);
+    setServerTimingHeaders(response, timings);
+    return response;
+  }
+
   const parsed = checkoutPayloadSchema.safeParse(body);
   if (!parsed.success) {
     const response = NextResponse.json(
@@ -729,10 +654,6 @@ export async function POST(request: Request) {
     recordTiming(timings, "checkout_total", checkoutStartedAt);
     setServerTimingHeaders(response, timings);
     return response;
-  }
-
-  if (parsed.data.items.length === 0) {
-    return badRequest("Cart cannot be empty");
   }
 
   const normalizedRequestedItems = normalizeRequestedCheckoutItems(parsed.data.items);
@@ -818,7 +739,7 @@ export async function POST(request: Request) {
   const totalUGX = subtotalUGX + (deliveryQuote?.deliveryFee ?? 0);
   const orderId = randomUUID();
   const orderAccessToken = randomUUID();
-  const supabase = getSupabaseServerClient();
+  const supabase = getCheckoutServiceRoleClient();
 
   console.info("CHECKOUT_INIT", {
     orderId,

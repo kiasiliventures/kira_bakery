@@ -1,11 +1,20 @@
 import { createHash } from "node:crypto";
+import { NextResponse } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const validateSameOriginMutationMock = vi.fn();
 const enforceRateLimitMock = vi.fn();
 const getSupabaseServerClientMock = vi.fn();
 const getAuthenticatedUserMock = vi.fn();
 const getOrderAccessTokenMock = vi.fn();
+const getOrderPaymentSnapshotMock = vi.fn();
+const initiateOrderPaymentForOrderMock = vi.fn();
 const setOrderAccessCookieMock = vi.fn();
+const logSecurityEventMock = vi.fn();
+
+vi.mock("@/lib/http/same-origin", () => ({
+  validateSameOriginMutation: validateSameOriginMutationMock,
+}));
 
 vi.mock("@/lib/rate-limit", () => ({
   enforceRateLimit: enforceRateLimitMock,
@@ -18,8 +27,8 @@ vi.mock("@/lib/supabase/server", () => ({
 
 vi.mock("@/lib/payments/order-payments", () => ({
   getOrderAccessToken: getOrderAccessTokenMock,
-  getOrderPaymentSnapshot: vi.fn(),
-  initiateOrderPaymentForOrder: vi.fn(),
+  getOrderPaymentSnapshot: getOrderPaymentSnapshotMock,
+  initiateOrderPaymentForOrder: initiateOrderPaymentForOrderMock,
 }));
 
 vi.mock("@/lib/payments/order-access-cookie", () => ({
@@ -28,6 +37,10 @@ vi.mock("@/lib/payments/order-access-cookie", () => ({
 
 vi.mock("@/lib/delivery/quote-token", () => ({
   verifyDeliveryQuoteToken: vi.fn(),
+}));
+
+vi.mock("@/lib/observability/security-events", () => ({
+  logSecurityEvent: logSecurityEventMock,
 }));
 
 function stableSerialize(value: unknown): string {
@@ -156,7 +169,10 @@ function buildSupabaseClient(existingAttempt: Record<string, unknown>) {
   };
 }
 
-function buildStockValidationSupabaseClient() {
+function buildCheckoutValidationOnlySupabaseClient(input: {
+  productsData?: Array<Record<string, unknown>>;
+  productsError?: { code?: string; message: string } | null;
+}) {
   return {
     from(table: string) {
       if (table === "api_idempotency_keys") {
@@ -181,18 +197,8 @@ function buildStockValidationSupabaseClient() {
           select() {
             return {
               in: async () => ({
-                data: [
-                  {
-                    id: "product-1",
-                    name: "Milk Bread",
-                    image_url: "/bread.jpg",
-                    base_price: 4500,
-                    stock_quantity: 5,
-                    is_available: true,
-                    is_published: true,
-                  },
-                ],
-                error: null,
+                data: input.productsData ?? null,
+                error: input.productsError ?? null,
               }),
             };
           },
@@ -204,7 +210,11 @@ function buildStockValidationSupabaseClient() {
   };
 }
 
-function buildUnpublishedProductSupabaseClient() {
+function buildCheckoutExecutionSupabaseClient(input: {
+  productsData: Array<Record<string, unknown>>;
+  productsError?: { code?: string; message: string } | null;
+  onPlaceGuestOrder?: (payload: Record<string, unknown>) => void;
+}) {
   return {
     from(table: string) {
       if (table === "api_idempotency_keys") {
@@ -221,6 +231,23 @@ function buildUnpublishedProductSupabaseClient() {
               },
             };
           },
+          insert: async () => ({
+            error: null,
+          }),
+          update() {
+            return {
+              eq: async () => ({
+                error: null,
+              }),
+            };
+          },
+          delete() {
+            return {
+              eq: async () => ({
+                error: null,
+              }),
+            };
+          },
         };
       }
 
@@ -229,18 +256,8 @@ function buildUnpublishedProductSupabaseClient() {
           select() {
             return {
               in: async () => ({
-                data: [
-                  {
-                    id: "product-1",
-                    name: "Secret Cake",
-                    image_url: "/secret-cake.jpg",
-                    base_price: 45000,
-                    stock_quantity: 5,
-                    is_available: true,
-                    is_published: false,
-                  },
-                ],
-                error: null,
+                data: input.productsData,
+                error: input.productsError ?? null,
               }),
             };
           },
@@ -248,20 +265,41 @@ function buildUnpublishedProductSupabaseClient() {
       }
 
       throw new Error(`Unexpected table access in test: ${table}`);
+    },
+    rpc(functionName: string, payload: Record<string, unknown>) {
+      if (functionName !== "place_guest_order") {
+        throw new Error(`Unexpected RPC access in test: ${functionName}`);
+      }
+
+      input.onPlaceGuestOrder?.(payload);
+
+      return Promise.resolve({
+        error: null,
+      });
     },
   };
 }
 
 describe("checkout route regression tests", () => {
   beforeEach(() => {
+    vi.resetModules();
+    validateSameOriginMutationMock.mockReset();
     enforceRateLimitMock.mockResolvedValue({
       allowed: true,
       remaining: 10,
       retryAfterSeconds: 60,
     });
+    validateSameOriginMutationMock.mockReturnValue(null);
     getAuthenticatedUserMock.mockResolvedValue(null);
     setOrderAccessCookieMock.mockReset();
     getOrderAccessTokenMock.mockReset();
+    getOrderPaymentSnapshotMock.mockReset();
+    initiateOrderPaymentForOrderMock.mockReset();
+    logSecurityEventMock.mockReset();
+    initiateOrderPaymentForOrderMock.mockResolvedValue({
+      redirectUrl: "https://payments.example/redirect",
+      paymentStatus: "pending",
+    });
   });
 
   it("rejects a stored checkout retry from a different browser session", async () => {
@@ -362,6 +400,9 @@ describe("checkout route regression tests", () => {
 
   it("rejects cross-site checkout requests before processing", async () => {
     const payload = buildValidPayload();
+    validateSameOriginMutationMock.mockReturnValueOnce(
+      NextResponse.json({ message: "Cross-site mutation request rejected." }, { status: 403 }),
+    );
 
     const { POST } = await import("@/app/api/checkout/route");
 
@@ -387,7 +428,21 @@ describe("checkout route regression tests", () => {
   });
 
   it("rejects duplicate cart lines that exceed stock in aggregate", async () => {
-    getSupabaseServerClientMock.mockReturnValue(buildStockValidationSupabaseClient());
+    getSupabaseServerClientMock.mockReturnValue(
+      buildCheckoutValidationOnlySupabaseClient({
+        productsData: [
+          {
+            id: "product-1",
+            name: "Milk Bread",
+            image_url: "/bread.jpg",
+            base_price: 4500,
+            stock_quantity: 5,
+            is_available: true,
+            is_published: true,
+          },
+        ],
+      }),
+    );
 
     const { POST } = await import("@/app/api/checkout/route");
 
@@ -432,7 +487,21 @@ describe("checkout route regression tests", () => {
   });
 
   it("rejects unpublished products even when they are in stock", async () => {
-    getSupabaseServerClientMock.mockReturnValue(buildUnpublishedProductSupabaseClient());
+    getSupabaseServerClientMock.mockReturnValue(
+      buildCheckoutValidationOnlySupabaseClient({
+        productsData: [
+          {
+            id: "product-1",
+            name: "Secret Cake",
+            image_url: "/secret-cake.jpg",
+            base_price: 45000,
+            stock_quantity: 5,
+            is_available: true,
+            is_published: false,
+          },
+        ],
+      }),
+    );
 
     const { POST } = await import("@/app/api/checkout/route");
 
@@ -470,5 +539,324 @@ describe("checkout route regression tests", () => {
       message: "Secret Cake is unavailable.",
     });
     expect(setOrderAccessCookieMock).not.toHaveBeenCalled();
+  });
+
+  it("aggregates duplicate cart lines before persisting the order", async () => {
+    let placedOrderPayload: Record<string, unknown> | null = null;
+
+    getSupabaseServerClientMock.mockReturnValue(
+      buildCheckoutExecutionSupabaseClient({
+        productsData: [
+          {
+            id: "product-1",
+            name: "Milk Bread",
+            image_url: "/bread.jpg",
+            base_price: 4500,
+            stock_quantity: 5,
+            is_available: true,
+            is_published: true,
+          },
+        ],
+        onPlaceGuestOrder(payload) {
+          placedOrderPayload = payload;
+        },
+      }),
+    );
+
+    const { POST } = await import("@/app/api/checkout/route");
+
+    const response = await POST(
+      new Request("https://example.com/api/checkout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": "checkout-key-6",
+          "X-Checkout-Session": "session-token",
+          Origin: "https://example.com",
+        },
+        body: JSON.stringify({
+          customer: {
+            deliveryMethod: "pickup",
+            customerName: "Jane Doe",
+            phone: "+256700000000",
+            email: "",
+            address: "",
+            deliveryDate: "",
+            notes: "",
+          },
+          items: [
+            {
+              productId: "product-1",
+              quantity: 1,
+            },
+            {
+              productId: "product-1",
+              quantity: 2,
+            },
+          ],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(placedOrderPayload).toEqual(
+      expect.objectContaining({
+        order_items: [
+          expect.objectContaining({
+            product_id: "product-1",
+            quantity: 3,
+            price_ugx: 4500,
+          }),
+        ],
+        order_total_ugx: 13500,
+      }),
+    );
+    expect(initiateOrderPaymentForOrderMock).toHaveBeenCalledTimes(1);
+    expect(setOrderAccessCookieMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses canonical backend pricing instead of client-submitted item prices", async () => {
+    let placedOrderPayload: Record<string, unknown> | null = null;
+
+    getSupabaseServerClientMock.mockReturnValue(
+      buildCheckoutExecutionSupabaseClient({
+        productsData: [
+          {
+            id: "product-1",
+            name: "Milk Bread",
+            image_url: "/bread.jpg",
+            base_price: 4500,
+            stock_quantity: 5,
+            is_available: true,
+            is_published: true,
+          },
+        ],
+        onPlaceGuestOrder(payload) {
+          placedOrderPayload = payload;
+        },
+      }),
+    );
+
+    const { POST } = await import("@/app/api/checkout/route");
+
+    const response = await POST(
+      new Request("https://example.com/api/checkout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": "checkout-key-7",
+          "X-Checkout-Session": "session-token",
+          Origin: "https://example.com",
+        },
+        body: JSON.stringify({
+          customer: {
+            deliveryMethod: "pickup",
+            customerName: "Jane Doe",
+            phone: "+256700000000",
+            email: "",
+            address: "",
+            deliveryDate: "",
+            notes: "",
+          },
+          items: [
+            {
+              productId: "product-1",
+              quantity: 1,
+              priceUGX: 1,
+              name: "Cheap Bread",
+              image: "/fake.jpg",
+            },
+          ],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(placedOrderPayload).toEqual(
+      expect.objectContaining({
+        order_items: [
+          expect.objectContaining({
+            name: "Milk Bread",
+            image: "/bread.jpg",
+            price_ugx: 4500,
+            quantity: 1,
+          }),
+        ],
+        order_total_ugx: 4500,
+      }),
+    );
+  });
+
+  it("fails closed when the shared checkout schema is unavailable", async () => {
+    getSupabaseServerClientMock.mockReturnValue(
+      buildCheckoutValidationOnlySupabaseClient({
+        productsError: {
+          code: "42703",
+          message: "column products.base_price does not exist",
+        },
+      }),
+    );
+
+    const { POST } = await import("@/app/api/checkout/route");
+
+    const response = await POST(
+      new Request("https://example.com/api/checkout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": "checkout-key-8",
+          "X-Checkout-Session": "session-token",
+          Origin: "https://example.com",
+        },
+        body: JSON.stringify(buildValidPayload()),
+      }),
+    );
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({
+      message: "Unable to validate cart items.",
+    });
+    expect(initiateOrderPaymentForOrderMock).not.toHaveBeenCalled();
+    expect(setOrderAccessCookieMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects carts that exceed the maximum item count", async () => {
+    const { POST } = await import("@/app/api/checkout/route");
+
+    const response = await POST(
+      new Request("https://example.com/api/checkout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": "checkout-key-9",
+          "X-Checkout-Session": "session-token",
+          Origin: "https://example.com",
+        },
+        body: JSON.stringify({
+          customer: buildValidPayload().customer,
+          items: Array.from({ length: 26 }, (_, index) => ({
+            productId: `product-${index + 1}`,
+            quantity: 1,
+          })),
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual(
+      expect.objectContaining({
+        message: "Invalid checkout payload",
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            message: "Cart cannot contain more than 25 items",
+            path: ["items"],
+          }),
+        ]),
+      }),
+    );
+    expect(getSupabaseServerClientMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects oversized customer fields before cart validation", async () => {
+    const payload = buildValidPayload();
+    payload.customer.customerName = "J".repeat(81);
+
+    const { POST } = await import("@/app/api/checkout/route");
+
+    const response = await POST(
+      new Request("https://example.com/api/checkout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": "checkout-key-10",
+          "X-Checkout-Session": "session-token",
+          Origin: "https://example.com",
+        },
+        body: JSON.stringify(payload),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual(
+      expect.objectContaining({
+        message: "Invalid checkout payload",
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            message: "Keep your name under 80 characters",
+            path: ["customer", "customerName"],
+          }),
+        ]),
+      }),
+    );
+    expect(getSupabaseServerClientMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects oversized option strings", async () => {
+    const payload = buildValidPayload();
+    payload.items = [
+      {
+        productId: "product-1",
+        quantity: 1,
+        selectedSize: "L".repeat(81),
+      },
+    ];
+
+    const { POST } = await import("@/app/api/checkout/route");
+
+    const response = await POST(
+      new Request("https://example.com/api/checkout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": "checkout-key-11",
+          "X-Checkout-Session": "session-token",
+          Origin: "https://example.com",
+        },
+        body: JSON.stringify(payload),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual(
+      expect.objectContaining({
+        message: "Invalid checkout payload",
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            message: "Keep selected size under 80 characters",
+            path: ["items", 0, "selectedSize"],
+          }),
+        ]),
+      }),
+    );
+    expect(getSupabaseServerClientMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects checkout bodies that exceed the request size limit", async () => {
+    const payload = {
+      ...buildValidPayload(),
+      padding: "x".repeat(17_000),
+    };
+
+    const { POST } = await import("@/app/api/checkout/route");
+
+    const response = await POST(
+      new Request("https://example.com/api/checkout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": "checkout-key-12",
+          "X-Checkout-Session": "session-token",
+          Origin: "https://example.com",
+        },
+        body: JSON.stringify(payload),
+      }),
+    );
+
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toEqual({
+      message: "Checkout payload is too large.",
+    });
+    expect(getSupabaseServerClientMock).not.toHaveBeenCalled();
+    expect(initiateOrderPaymentForOrderMock).not.toHaveBeenCalled();
   });
 });

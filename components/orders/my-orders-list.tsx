@@ -1,11 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button } from "@/components/ui/button";
+import Link from "next/link";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatUGX } from "@/lib/format";
+import { buildOrderPath } from "@/lib/orders/order-link";
 import type { CustomerOrderSummary } from "@/lib/orders/customer-orders";
 import type { CanonicalOrderStatus } from "@/lib/orders/status";
+import { cn } from "@/lib/utils";
 
 type OrdersResponse = {
   ok?: boolean;
@@ -136,6 +139,13 @@ export function MyOrdersList() {
                 </div>
               ))}
             </div>
+
+            <Link
+              href={buildOrderPath(order.id)}
+              className={cn(buttonVariants({ variant: "outline", size: "sm", className: "w-full sm:w-auto" }))}
+            >
+              View Order
+            </Link>
           </CardContent>
         </Card>
       ))}

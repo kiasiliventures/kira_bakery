@@ -656,6 +656,7 @@ export function createPesapalGateway(): PaymentGateway {
         amountUGX: input.amount,
         description: input.description,
         customerName: input.customerName,
+        orderAccessLinkToken: input.orderAccessLinkToken,
         phone: input.phone,
         email: input.email,
         requestOrigin: input.requestOrigin,

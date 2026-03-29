@@ -3,7 +3,10 @@ import "server-only";
 import { unstable_cache } from "next/cache";
 import { logSecurityEvent } from "@/lib/observability/security-events";
 import { createOrderAccessLinkToken } from "@/lib/payments/order-access-link";
-import { normalizeOrderStatusLabel } from "@/lib/orders/status";
+import {
+  formatPaymentStatusLabel,
+  normalizeOrderStatusLabel,
+} from "@/lib/orders/status";
 import { getPaymentProvider, parsePaymentProviderName, type PaymentProviderName } from "@/lib/payments/config";
 import {
   getPaymentGateway,
@@ -14,6 +17,7 @@ import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 type OrderPaymentRow = {
   id: string;
+  customer_id: string | null;
   order_access_token: string;
   total_ugx: number;
   total_price?: number | null;
@@ -35,12 +39,21 @@ type OrderPaymentRow = {
   inventory_conflict: boolean | null;
   inventory_deduction_status: string | null;
   inventory_deduction_attempted_at: string | null;
+  fulfillment_method: "delivery" | "pickup" | null;
+  delivery_method: "delivery" | "pickup" | null;
+  address: string | null;
+  delivery_address: string | null;
+  delivery_address_text: string | null;
+  delivery_date: string | null;
+  delivery_fee: number | null;
+  notes: string | null;
   created_at: string;
   order_items?: OrderPaymentItemRow[] | null;
 };
 
 type OrderPaymentItemRow = {
   name: string;
+  price_ugx: number | null;
   quantity: number;
   selected_size: string | null;
   selected_flavor: string | null;
@@ -80,6 +93,31 @@ export type OrderPaymentSnapshot = {
   verified: boolean;
   items: Array<{
     name: string;
+    quantity: number;
+    selectedSize: string | null;
+    selectedFlavor: string | null;
+  }>;
+};
+
+export type OrderDetailSnapshot = {
+  orderId: string;
+  customerName: string;
+  orderStatus: string;
+  totalUGX: number;
+  subtotalUGX: number;
+  deliveryFeeUGX: number;
+  paymentStatus: string;
+  paymentStatusLabel: string;
+  viewState: PaymentViewState;
+  verified: boolean;
+  fulfillmentMethod: "delivery" | "pickup";
+  deliveryAddress: string | null;
+  deliveryDate: string | null;
+  notes: string | null;
+  createdAt: string;
+  items: Array<{
+    name: string;
+    priceUGX: number;
     quantity: number;
     selectedSize: string | null;
     selectedFlavor: string | null;
@@ -140,6 +178,7 @@ export type OrderPaymentAuthorityResult = {
 const PAYMENT_STATUS_REFRESH_REVALIDATE_SECONDS = 15;
 const ORDER_PAYMENT_SELECTION = [
   "id",
+  "customer_id",
   "order_access_token",
   "total_ugx",
   "total_price",
@@ -161,8 +200,16 @@ const ORDER_PAYMENT_SELECTION = [
   "inventory_conflict",
   "inventory_deduction_status",
   "inventory_deduction_attempted_at",
+  "fulfillment_method",
+  "delivery_method",
+  "address",
+  "delivery_address",
+  "delivery_address_text",
+  "delivery_date",
+  "delivery_fee",
+  "notes",
   "created_at",
-  "order_items(name,quantity,selected_size,selected_flavor)",
+  "order_items(name,price_ugx,quantity,selected_size,selected_flavor)",
 ].join(",");
 const NOT_ALREADY_PAID_FILTER = [
   "payment_status.is.null",
@@ -393,8 +440,59 @@ function shouldAttemptPaidOrderInventoryDeduction(row: OrderPaymentRow) {
   );
 }
 
+function resolveFulfillmentMethod(row: OrderPaymentRow): "delivery" | "pickup" {
+  return row.fulfillment_method ?? row.delivery_method ?? "pickup";
+}
+
+function resolveDeliveryAddress(row: OrderPaymentRow) {
+  const values = [
+    row.delivery_address_text,
+    row.delivery_address,
+    row.address,
+  ];
+
+  for (const value of values) {
+    const normalized = value?.trim();
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return null;
+}
+
+function resolveDeliveryFeeUGX(row: OrderPaymentRow) {
+  return Math.max(Math.round(Number(row.delivery_fee ?? 0)), 0);
+}
+
+function hasOrderReadAccess(
+  row: OrderPaymentRow,
+  options?: {
+    authenticatedUserId?: string | null;
+    accessToken?: string | null;
+  },
+) {
+  if (options?.authenticatedUserId && row.customer_id === options.authenticatedUserId) {
+    return true;
+  }
+
+  return Boolean(options?.accessToken && options.accessToken === row.order_access_token);
+}
+
 function assertOrderAccess(row: OrderPaymentRow, accessToken?: string | null) {
-  if (!accessToken || accessToken !== row.order_access_token) {
+  if (!hasOrderReadAccess(row, { accessToken })) {
+    throw new OrderAccessDeniedError();
+  }
+}
+
+function assertOrderReadAccess(
+  row: OrderPaymentRow,
+  options?: {
+    authenticatedUserId?: string | null;
+    accessToken?: string | null;
+  },
+) {
+  if (!hasOrderReadAccess(row, options)) {
     throw new OrderAccessDeniedError();
   }
 }
@@ -494,6 +592,44 @@ function buildAuthorityResult(input: {
       reviewRequired: Boolean(input.row.fulfillment_review_required),
       inventoryConflict: Boolean(input.row.inventory_conflict),
     }),
+  };
+}
+
+function buildOrderDetailSnapshot(
+  row: OrderPaymentRow,
+  options?: {
+    verified?: boolean;
+    hint?: "cancelled" | "pending";
+  },
+): OrderDetailSnapshot {
+  const paymentStatus = normalizeStoredPaymentStatus(row.payment_status);
+  const items = (row.order_items ?? []).map((item) => ({
+    name: item.name,
+    priceUGX: Math.round(Number(item.price_ugx ?? 0)),
+    quantity: item.quantity,
+    selectedSize: item.selected_size,
+    selectedFlavor: item.selected_flavor,
+  }));
+  const deliveryFeeUGX = resolveDeliveryFeeUGX(row);
+  const subtotalUGX = items.reduce((sum, item) => sum + (item.priceUGX * item.quantity), 0);
+
+  return {
+    orderId: row.id,
+    customerName: row.customer_name,
+    orderStatus: normalizeOrderStatusLabel(row.order_status ?? row.status, row.payment_status),
+    totalUGX: row.total_ugx,
+    subtotalUGX: subtotalUGX > 0 ? subtotalUGX : Math.max(row.total_ugx - deliveryFeeUGX, 0),
+    deliveryFeeUGX,
+    paymentStatus,
+    paymentStatusLabel: formatPaymentStatusLabel(row.payment_status),
+    viewState: mapViewState(paymentStatus, options?.hint),
+    verified: options?.verified ?? paymentStatus === "paid",
+    fulfillmentMethod: resolveFulfillmentMethod(row),
+    deliveryAddress: resolveDeliveryAddress(row),
+    deliveryDate: row.delivery_date,
+    notes: row.notes?.trim() || null,
+    createdAt: row.created_at,
+    items,
   };
 }
 
@@ -1047,6 +1183,68 @@ export async function getOrderPaymentSnapshot(
   }
 
   return buildSnapshot(row, {
+    hint: options?.hint,
+  });
+}
+
+export async function getOrderDetailSnapshot(
+  orderId: string,
+  options?: {
+    refresh?: boolean;
+    hint?: "cancelled" | "pending";
+    accessToken?: string | null;
+    authenticatedUserId?: string | null;
+    requireAuthorization?: boolean;
+  },
+): Promise<OrderDetailSnapshot> {
+  const row = await getOrderPaymentRow(orderId);
+  if (!row) {
+    throw new Error("Order not found.");
+  }
+
+  if (options?.requireAuthorization) {
+    assertOrderReadAccess(row, {
+      authenticatedUserId: options.authenticatedUserId,
+      accessToken: options.accessToken,
+    });
+  }
+
+  const paymentStatus = normalizeStoredPaymentStatus(row.payment_status);
+  const shouldRefresh = Boolean(
+    options?.refresh && row.order_tracking_id && paymentStatus === "pending",
+  );
+
+  if (shouldRefresh) {
+    await unstable_cache(
+      async () =>
+        syncOrderPaymentForOrder({
+          orderId,
+          orderTrackingId: row.order_tracking_id,
+          source: "status",
+        }),
+      ["order-detail-status-refresh", orderId],
+      { revalidate: PAYMENT_STATUS_REFRESH_REVALIDATE_SECONDS },
+    )();
+
+    const refreshedRow = await getOrderPaymentRow(orderId);
+    if (!refreshedRow) {
+      throw new Error("Order not found.");
+    }
+
+    if (options?.requireAuthorization) {
+      assertOrderReadAccess(refreshedRow, {
+        authenticatedUserId: options.authenticatedUserId,
+        accessToken: options.accessToken,
+      });
+    }
+
+    return buildOrderDetailSnapshot(refreshedRow, {
+      verified: true,
+      hint: options?.hint,
+    });
+  }
+
+  return buildOrderDetailSnapshot(row, {
     hint: options?.hint,
   });
 }

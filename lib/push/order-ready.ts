@@ -1,5 +1,7 @@
 import "server-only";
 
+import { buildOrderPath } from "@/lib/orders/order-link";
+
 import { createOrderAccessLinkToken } from "@/lib/payments/order-access-link";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import {
@@ -53,23 +55,18 @@ function isReadyOrder(row: Pick<OrderReadyRow, "status" | "order_status">) {
 
 function buildOrderUrl(order: Pick<OrderReadyRow, "id" | "customer_id" | "order_access_token">) {
   if (order.customer_id) {
-    return "/account/orders";
+    return buildOrderPath(order.id);
   }
 
-  const params = new URLSearchParams({
-    orderId: order.id,
-  });
-  if (order.order_access_token) {
-    params.set(
-      "access",
-      createOrderAccessLinkToken({
+  return buildOrderPath(
+    order.id,
+    order.order_access_token
+      ? createOrderAccessLinkToken({
         orderId: order.id,
         accessToken: order.order_access_token,
-      }),
-    );
-  }
-
-  return `/payment/result?${params.toString()}`;
+      })
+      : null,
+  );
 }
 
 async function getOrderForReadyPush(orderId: string) {
@@ -244,7 +241,7 @@ export async function triggerOrderReadyPush(input: {
     return {
       duplicate: true,
       orderId: input.orderId,
-      orderUrl: `/payment/result?orderId=${encodeURIComponent(input.orderId)}`,
+      orderUrl: buildOrderPath(input.orderId),
       subscriptionCount: 0,
       successCount: 0,
       staleSubscriptionCount: 0,
@@ -352,3 +349,4 @@ export function toPushTriggerResponseMessage(error: unknown) {
 
   return "Unable to trigger order ready push notification.";
 }
+

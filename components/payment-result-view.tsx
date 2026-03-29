@@ -2,12 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { EnableOrderNotifications } from "@/components/enable-order-notifications";
 import { useCart } from "@/components/providers/app-provider";
-import { OrderReviewPrompt } from "@/components/order-review-prompt";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatUGX } from "@/lib/format";
+import { buildOrderPath } from "@/lib/orders/order-link";
 
 type PaymentResultOrder = {
   orderId: string;
@@ -33,9 +32,6 @@ type PaymentStatusResponse = {
 
 const POLL_INTERVAL_MS = 10_000;
 const MAX_POLL_ATTEMPTS = 5;
-const REVIEWABLE_ORDER_STATUSES = new Set(["paid", "ready", "completed"]);
-const BLOCKED_PAYMENT_STATUSES = new Set(["failed", "payment_failed", "cancelled", "canceled"]);
-
 function getTitle(viewState: PaymentResultOrder["viewState"] | null) {
   if (viewState === "success") return "Payment confirmed";
   if (viewState === "failed") return "Payment failed";
@@ -58,21 +54,6 @@ function getMessage(order: PaymentResultOrder | null) {
     return "The payment was cancelled or abandoned. Your order remains unpaid and stock is untouched.";
   }
   return "We have not verified a successful payment yet. You can refresh this page in a moment.";
-}
-
-function shouldShowReviewPrompt(order: PaymentResultOrder | null) {
-  if (!order) {
-    return false;
-  }
-
-  const normalizedPaymentStatus = order.paymentStatus.trim().toLowerCase();
-  const normalizedOrderStatus = order.orderStatus.trim().toLowerCase();
-
-  if (BLOCKED_PAYMENT_STATUSES.has(normalizedPaymentStatus)) {
-    return false;
-  }
-
-  return REVIEWABLE_ORDER_STATUSES.has(normalizedOrderStatus);
 }
 
 export function PaymentResultView() {
@@ -153,8 +134,9 @@ export function PaymentResultView() {
   const order = payload?.order ?? null;
   const title = getTitle(order?.viewState ?? null);
   const message = getMessage(order);
-  const showReviewPrompt = !isLoading && !error && shouldShowReviewPrompt(order);
-  const showNotificationOptIn = !isLoading && !error && order?.viewState === "success" && order.verified;
+  const viewOrderUrl = order
+    ? buildOrderPath(order.orderId, orderAccessLinkToken)
+    : null;
 
   useEffect(() => {
     if (order?.viewState !== "success" || hasClearedCartRef.current) {
@@ -198,41 +180,23 @@ export function PaymentResultView() {
           <CardContent className="space-y-6 p-8 pt-0">
             {order && !isLoading && !error && (
               <section className="rounded-2xl border border-accent/20 bg-surface-alt/45 p-6 text-sm text-foreground">
-                <h2 className="font-serif text-2xl text-foreground">Order details</h2>
+                <h2 className="font-serif text-2xl text-foreground">Payment summary</h2>
                 <div className="mt-4 space-y-3">
                   <p>Order ID: {order.orderId}</p>
-                  <p>Amount paid: {formatUGX(order.totalUGX)}</p>
+                  <p>Order total: {formatUGX(order.totalUGX)}</p>
                   <p>Payment status: {order.paymentStatus}</p>
                   <p>Order status: {order.orderStatus}</p>
                   <p>Verified with Pesapal: {order.verified ? "yes" : "no"}</p>
                 </div>
-                {order.items.length > 0 && (
-                  <div className="pt-4">
-                    <p className="font-semibold text-foreground">Items ordered</p>
-                    <ul className="mt-2 space-y-2">
-                      {order.items.map((item, index) => (
-                        <li key={`${item.name}-${index}`} className="rounded-xl bg-surface px-4 py-3">
-                          <span className="font-medium">{item.quantity} x {item.name}</span>
-                          {(item.selectedSize || item.selectedFlavor) && (
-                            <span className="text-muted">
-                              {" "}
-                              {[
-                                item.selectedSize ? `Size: ${item.selectedSize}` : null,
-                                item.selectedFlavor ? `Flavor: ${item.selectedFlavor}` : null,
-                              ]
-                                .filter(Boolean)
-                                .join(" | ")}
-                            </span>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
               </section>
             )}
 
             <div className="flex flex-wrap gap-3">
+              {viewOrderUrl && (
+                <Button type="button" onClick={() => window.location.assign(viewOrderUrl)}>
+                  View Order
+                </Button>
+              )}
               <Button
                 type="button"
                 onClick={() => {
@@ -240,6 +204,7 @@ export function PaymentResultView() {
                   setRequestSequence((current) => current + 1);
                 }}
                 disabled={!orderId || isLoading}
+                variant={viewOrderUrl ? "outline" : "default"}
               >
                 Check Status
               </Button>
@@ -252,10 +217,6 @@ export function PaymentResultView() {
             </div>
           </CardContent>
         </Card>
-
-        {showReviewPrompt && <OrderReviewPrompt />}
-
-        {showNotificationOptIn && order && <EnableOrderNotifications orderId={order.orderId} />}
       </div>
     </main>
   );

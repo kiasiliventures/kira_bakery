@@ -102,11 +102,13 @@ describe("Pesapal provider", () => {
 
     vi.stubGlobal("fetch", fetchMock);
 
-    const { submitPesapalOrderRequest } = await import("@/lib/payments/providers/pesapal");
+    const { createPesapalGateway } = await import("@/lib/payments/providers/pesapal");
+    const gateway = createPesapalGateway();
 
-    const response = await submitPesapalOrderRequest({
+    const response = await gateway.initiatePayment({
       orderId: "order-123",
-      amountUGX: 12000,
+      amount: 12000,
+      currency: "UGX",
       description: "Kira Bakery order order-123",
       customerName: "Jane Mary Doe",
       orderAccessLinkToken: "signed-order-access-token",
@@ -115,8 +117,8 @@ describe("Pesapal provider", () => {
       requestOrigin: "https://kira-bakery.example.com",
     });
 
-    expect(response.order_tracking_id).toBe("tracking-123");
-    expect(response.redirect_url).toContain("tracking-123");
+    expect(response.providerReference).toBe("tracking-123");
+    expect(response.redirectUrl).toContain("tracking-123");
 
     const submitCall = fetchMock.mock.calls.find(([url]) =>
       String(url).endsWith("/api/Transactions/SubmitOrderRequest"),

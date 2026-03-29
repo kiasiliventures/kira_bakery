@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 :root {
-  --font-inter: "Times New Roman", Times, serif;
-  --font-playfair: "Times New Roman", Times, serif;
+  --font-inter: var(--font-noto-serif), Georgia, "Times New Roman", Times, serif;
+  --font-playfair: var(--font-noto-serif), Georgia, "Times New Roman", Times, serif;
   --background: #f5e6d3;
   --foreground: #3a2a1e;
   --surface: #fff8f0;

@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { Noto_Serif } from "next/font/google";
 import { Analytics } from "@vercel/analytics/react";
 import { PortraitOrientationHint } from "@/components/portrait-orientation-hint";
 import { AuthProvider } from "@/components/providers/auth-provider";
@@ -7,6 +8,12 @@ import { PwaRegister } from "@/components/pwa-register";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
 import "./globals.css";
+
+const notoSerif = Noto_Serif({
+  subsets: ["latin"],
+  variable: "--font-noto-serif",
+  display: "swap",
+});
 
 const themeScript = `
   (() => {
@@ -84,7 +91,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning className={notoSerif.variable}>
       <head>
         <meta name="theme-color" content="#f5e6d3" />
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />

@@ -77,7 +77,7 @@ export const deliveryLocationSchema = z.object({
   ),
   latitude: optionalFiniteNumber,
   longitude: optionalFiniteNumber,
-});
+}).strict();
 
 export const checkoutSchema = z
   .object({
@@ -112,6 +112,7 @@ export const checkoutSchema = z
       `Keep the delivery quote token under ${CHECKOUT_DELIVERY_QUOTE_TOKEN_MAX_LENGTH} characters`,
     ),
   })
+  .strict()
   .superRefine((data, ctx) => {
     const deliveryDate = data.deliveryDate?.trim();
     if (deliveryDate) {
@@ -181,12 +182,12 @@ export const deliveryQuoteRequestSchema = z.object({
   addressText: z.string().min(3, "A delivery address is required"),
   latitude: optionalFiniteNumber,
   longitude: optionalFiniteNumber,
-});
+}).strict();
 
 export const deliveryAutocompleteRequestSchema = z.object({
   input: z.string().min(3, "Enter at least 3 characters"),
   sessionToken: optionalTextFieldWithMax(200, "Keep the session token under 200 characters"),
-});
+}).strict();
 
 export const cakeBuilderSchema = z
   .object({

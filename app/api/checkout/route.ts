@@ -105,6 +105,7 @@ const MAX_CHECKOUT_ITEMS = 25;
 const MAX_CHECKOUT_REQUEST_BODY_BYTES = 16_384;
 const MAX_CHECKOUT_OPTION_LENGTH = 80;
 const MAX_CHECKOUT_PRODUCT_ID_LENGTH = 128;
+const MAX_CHECKOUT_VALIDATION_ISSUES = 5;
 
 const checkoutPayloadSchema = z.object({
   customer: checkoutSchema,
@@ -130,11 +131,11 @@ const checkoutPayloadSchema = z.object({
             `Keep selected flavor under ${MAX_CHECKOUT_OPTION_LENGTH} characters`,
           )
           .optional(),
-      }),
+      }).strict(),
     )
     .min(1, "Cart cannot be empty")
     .max(MAX_CHECKOUT_ITEMS, `Cart cannot contain more than ${MAX_CHECKOUT_ITEMS} items`),
-});
+}).strict();
 
 function badRequest(message: string) {
   return NextResponse.json({ message }, { status: 400 });
@@ -181,6 +182,46 @@ function tooManyRequests(retryAfterSeconds: number) {
 
 function requestEntityTooLarge(message: string) {
   return NextResponse.json({ message }, { status: 413 });
+}
+
+function getRequestContentLength(request: Request) {
+  const headerValue = request.headers.get("Content-Length")?.trim();
+  if (!headerValue) {
+    return null;
+  }
+
+  const parsed = Number(headerValue);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return null;
+  }
+
+  return Math.floor(parsed);
+}
+
+function formatValidationIssues(error: z.ZodError) {
+  const formatted: Array<{ path: string; message: string }> = [];
+  const seen = new Set<string>();
+
+  for (const issue of error.issues) {
+    const path = issue.path.map(String).join(".");
+    const dedupeKey = `${path}:${issue.message}`;
+
+    if (seen.has(dedupeKey)) {
+      continue;
+    }
+
+    seen.add(dedupeKey);
+    formatted.push({
+      path,
+      message: issue.message,
+    });
+
+    if (formatted.length >= MAX_CHECKOUT_VALIDATION_ISSUES) {
+      break;
+    }
+  }
+
+  return formatted;
 }
 
 function getIdempotencyKey(request: Request) {
@@ -620,6 +661,14 @@ export async function POST(request: Request) {
   }
   const sessionBindingHash = buildCheckoutSessionBindingHash(checkoutSessionToken);
 
+  const contentLength = getRequestContentLength(request);
+  if (contentLength !== null && contentLength > MAX_CHECKOUT_REQUEST_BODY_BYTES) {
+    const response = requestEntityTooLarge("Checkout payload is too large.");
+    recordTiming(timings, "checkout_total", checkoutStartedAt);
+    setServerTimingHeaders(response, timings);
+    return response;
+  }
+
   const parseBodyStartedAt = startTiming();
   const rawBody = await request.text();
   recordTiming(timings, "checkout_parse_body", parseBodyStartedAt);
@@ -648,7 +697,7 @@ export async function POST(request: Request) {
   const parsed = checkoutPayloadSchema.safeParse(body);
   if (!parsed.success) {
     const response = NextResponse.json(
-      { message: "Invalid checkout payload", issues: parsed.error.issues },
+      { message: "Invalid checkout payload", issues: formatValidationIssues(parsed.error) },
       { status: 400 },
     );
     recordTiming(timings, "checkout_total", checkoutStartedAt);

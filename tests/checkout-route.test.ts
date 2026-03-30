@@ -613,7 +613,7 @@ describe("checkout route regression tests", () => {
         issues: expect.arrayContaining([
           expect.objectContaining({
             message: "Choose today or a future date",
-            path: ["customer", "deliveryDate"],
+            path: "customer.deliveryDate",
           }),
         ]),
       }),
@@ -697,28 +697,7 @@ describe("checkout route regression tests", () => {
     expect(setOrderAccessCookieMock).toHaveBeenCalledTimes(1);
   });
 
-  it("uses canonical backend pricing instead of client-submitted item prices", async () => {
-    let placedOrderPayload: Record<string, unknown> | null = null;
-
-    getSupabaseServerClientMock.mockReturnValue(
-      buildCheckoutExecutionSupabaseClient({
-        productsData: [
-          {
-            id: "product-1",
-            name: "Milk Bread",
-            image_url: "/bread.jpg",
-            base_price: 4500,
-            stock_quantity: 5,
-            is_available: true,
-            is_published: true,
-          },
-        ],
-        onPlaceGuestOrder(payload) {
-          placedOrderPayload = payload;
-        },
-      }),
-    );
-
+  it("rejects unexpected client-submitted item pricing fields", async () => {
     const { POST } = await import("@/app/api/checkout/route");
 
     const response = await POST(
@@ -753,20 +732,19 @@ describe("checkout route regression tests", () => {
       }),
     );
 
-    expect(response.status).toBe(200);
-    expect(placedOrderPayload).toEqual(
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual(
       expect.objectContaining({
-        order_items: [
+        message: "Invalid checkout payload",
+        issues: expect.arrayContaining([
           expect.objectContaining({
-            name: "Milk Bread",
-            image: "/bread.jpg",
-            price_ugx: 4500,
-            quantity: 1,
+            message: "Unrecognized keys: \"priceUGX\", \"name\", \"image\"",
+            path: "items.0",
           }),
-        ],
-        order_total_ugx: 4500,
+        ]),
       }),
     );
+    expect(getSupabaseServerClientMock).not.toHaveBeenCalled();
   });
 
   it("fails closed when the shared checkout schema is unavailable", async () => {
@@ -831,7 +809,7 @@ describe("checkout route regression tests", () => {
         issues: expect.arrayContaining([
           expect.objectContaining({
             message: "Cart cannot contain more than 25 items",
-            path: ["items"],
+            path: "items",
           }),
         ]),
       }),
@@ -865,7 +843,7 @@ describe("checkout route regression tests", () => {
         issues: expect.arrayContaining([
           expect.objectContaining({
             message: "Keep your name under 80 characters",
-            path: ["customer", "customerName"],
+            path: "customer.customerName",
           }),
         ]),
       }),
@@ -905,7 +883,81 @@ describe("checkout route regression tests", () => {
         issues: expect.arrayContaining([
           expect.objectContaining({
             message: "Keep selected size under 80 characters",
-            path: ["items", 0, "selectedSize"],
+            path: "items.0.selectedSize",
+          }),
+        ]),
+      }),
+    );
+    expect(getSupabaseServerClientMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects unknown top-level checkout payload fields", async () => {
+    const { POST } = await import("@/app/api/checkout/route");
+
+    const response = await POST(
+      new Request("https://example.com/api/checkout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": "checkout-key-11b",
+          "X-Checkout-Session": "session-token",
+          Origin: "https://example.com",
+        },
+        body: JSON.stringify({
+          ...buildValidPayload(),
+          couponCode: "FREEBREAD",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual(
+      expect.objectContaining({
+        message: "Invalid checkout payload",
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            message: "Unrecognized key: \"couponCode\"",
+            path: "",
+          }),
+        ]),
+      }),
+    );
+    expect(getSupabaseServerClientMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects unknown nested checkout item fields", async () => {
+    const { POST } = await import("@/app/api/checkout/route");
+
+    const response = await POST(
+      new Request("https://example.com/api/checkout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": "checkout-key-11c",
+          "X-Checkout-Session": "session-token",
+          Origin: "https://example.com",
+        },
+        body: JSON.stringify({
+          ...buildValidPayload(),
+          items: [
+            {
+              productId: "product-1",
+              quantity: 1,
+              discount: 500,
+            },
+          ],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual(
+      expect.objectContaining({
+        message: "Invalid checkout payload",
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            message: "Unrecognized key: \"discount\"",
+            path: "items.0",
           }),
         ]),
       }),
@@ -931,6 +983,31 @@ describe("checkout route regression tests", () => {
           Origin: "https://example.com",
         },
         body: JSON.stringify(payload),
+      }),
+    );
+
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toEqual({
+      message: "Checkout payload is too large.",
+    });
+    expect(getSupabaseServerClientMock).not.toHaveBeenCalled();
+    expect(initiateOrderPaymentForOrderMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects oversized checkout requests from Content-Length before reading the body", async () => {
+    const { POST } = await import("@/app/api/checkout/route");
+
+    const response = await POST(
+      new Request("https://example.com/api/checkout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": "17000",
+          "Idempotency-Key": "checkout-key-12b",
+          "X-Checkout-Session": "session-token",
+          Origin: "https://example.com",
+        },
+        body: JSON.stringify(buildValidPayload()),
       }),
     );
 

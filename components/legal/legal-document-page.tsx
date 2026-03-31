@@ -29,11 +29,6 @@ export function LegalDocumentPage({
         </p>
       </header>
 
-      <div className="rounded-[28px] border border-accent/20 bg-surface-alt p-5 text-sm leading-7 text-muted shadow-[var(--shadow-soft)]">
-        Placeholder content: replace this draft structure with Kira Bakery&apos;s final legal text
-        before launch and before submitting for Google verification.
-      </div>
-
       <div className="space-y-8 rounded-[32px] border border-border bg-surface p-6 shadow-[var(--shadow-card)] sm:p-8">
         {sections.map((section) => (
           <section key={section.title} className="space-y-3">

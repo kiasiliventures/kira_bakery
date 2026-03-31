@@ -44,13 +44,7 @@ export function AccountMenu() {
     const encodedNextPath = encodeURIComponent(nextPath);
 
     return (
-      <div className="hidden items-center gap-2 md:flex">
-        <Link
-          href={`/account/sign-in?next=${encodedNextPath}`}
-          className="rounded-xl px-3 py-2 text-sm font-medium text-muted transition-colors hover:bg-surface hover:text-foreground"
-        >
-          Sign in
-        </Link>
+      <div className="hidden items-center md:flex">
         <Link
           href={`/account/sign-up?next=${encodedNextPath}`}
           className="rounded-xl border-2 border-accent bg-surface px-3 py-2 text-sm font-semibold text-accent transition-colors hover:border-[var(--accent-hover)] hover:text-[var(--accent-hover)]"

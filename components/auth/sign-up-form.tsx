@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { GoogleAuthButton } from "@/components/auth/google-auth-button";
 import { getSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,12 +11,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 type SignUpFormProps = {
+  initialError?: string | null;
   nextPath: string;
 };
 
-export function SignUpForm({ nextPath }: SignUpFormProps) {
+export function SignUpForm({ initialError = null, nextPath }: SignUpFormProps) {
   const router = useRouter();
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(initialError);
   const [message, setMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -79,35 +81,49 @@ export function SignUpForm({ nextPath }: SignUpFormProps) {
           </p>
         </CardHeader>
         <CardContent className="p-8 pt-0">
-          <form action={onSubmit} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="fullName">Full name</Label>
-              <Input id="fullName" name="fullName" autoComplete="name" required />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input id="email" name="email" type="email" autoComplete="email" required />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
-              <Input id="password" name="password" type="password" autoComplete="new-password" required />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="confirmPassword">Confirm password</Label>
-              <Input
-                id="confirmPassword"
-                name="confirmPassword"
-                type="password"
-                autoComplete="new-password"
-                required
-              />
-            </div>
+          <div className="space-y-5">
             {error ? <p className="text-sm text-danger">{error}</p> : null}
-            {message ? <p className="text-sm text-muted">{message}</p> : null}
-            <Button className="w-full" loading={isSubmitting}>
-              Create account
-            </Button>
-          </form>
+            <GoogleAuthButton flow="sign-up" nextPath={nextPath} />
+            <div className="flex items-center gap-3 text-xs uppercase tracking-[0.18em] text-muted">
+              <span className="h-px flex-1 bg-accent/20" aria-hidden />
+              <span>Or use email</span>
+              <span className="h-px flex-1 bg-accent/20" aria-hidden />
+            </div>
+            <form action={onSubmit} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="fullName">Full name</Label>
+                <Input id="fullName" name="fullName" autoComplete="name" required />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="email">Email</Label>
+                <Input id="email" name="email" type="email" autoComplete="email" required />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="password">Password</Label>
+                <Input
+                  id="password"
+                  name="password"
+                  type="password"
+                  autoComplete="new-password"
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="confirmPassword">Confirm password</Label>
+                <Input
+                  id="confirmPassword"
+                  name="confirmPassword"
+                  type="password"
+                  autoComplete="new-password"
+                  required
+                />
+              </div>
+              {message ? <p className="text-sm text-muted">{message}</p> : null}
+              <Button className="w-full" loading={isSubmitting}>
+                Create account
+              </Button>
+            </form>
+          </div>
           <p className="mt-4 text-sm text-muted">
             Already have an account?{" "}
             <Link href={`/account/sign-in?next=${encodeURIComponent(nextPath)}`} className="font-medium text-accent hover:underline">

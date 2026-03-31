@@ -5,17 +5,10 @@ import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/components/providers/auth-provider";
+import { resolveAuthRedirectPath } from "@/lib/auth/redirect";
 
 export function normalizeNextPath(pathname: string | null) {
-  if (!pathname || !pathname.startsWith("/")) {
-    return "/account/orders";
-  }
-
-  if (pathname.startsWith("/account/sign-in") || pathname.startsWith("/account/sign-up")) {
-    return "/account/orders";
-  }
-
-  return pathname;
+  return resolveAuthRedirectPath(pathname ?? undefined);
 }
 
 export function getCustomerLabel(email: string | undefined, fullName: string | undefined) {

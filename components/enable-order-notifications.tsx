@@ -9,7 +9,12 @@ type EnableOrderNotificationsProps = {
   orderId: string;
 };
 
-type RequestState = "idle" | "submitting" | "success" | "error";
+type LinkState = "idle" | "checking" | "linking" | "linked" | "needs_permission" | "error";
+type SupportedPermissionState = NotificationPermission | "unsupported";
+
+type PushSubscriptionWithJson = PushSubscription & {
+  toJSON(): PushSubscriptionJSON;
+};
 
 type NavigatorWithStandalone = Navigator & {
   standalone?: boolean;
@@ -35,72 +40,174 @@ function getSupportedState() {
   );
 }
 
+function getPermissionState(): SupportedPermissionState {
+  if (!getSupportedState()) {
+    return "unsupported";
+  }
+
+  return Notification.permission;
+}
+
+function buildSubscribePayload(orderId: string, subscription: PushSubscriptionWithJson) {
+  return {
+    ...subscription.toJSON(),
+    orderId,
+  };
+}
+
+function logNotificationError(event: string, orderId: string, error: unknown) {
+  console.error(event, {
+    orderId,
+    error: error instanceof Error ? error.message : "unknown_error",
+  });
+}
+
+async function ensureServiceWorkerRegistration() {
+  const existingRegistration = await navigator.serviceWorker.getRegistration();
+  const registration = existingRegistration
+    ?? await navigator.serviceWorker.register("/sw.js", {
+      updateViaCache: "none",
+    });
+
+  await navigator.serviceWorker.ready;
+
+  return registration;
+}
+
+async function linkSubscriptionToOrder(orderId: string, subscription: PushSubscriptionWithJson) {
+  const response = await fetch("/api/push/subscribe", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(buildSubscribePayload(orderId, subscription)),
+  });
+  const payload = (await response.json().catch(() => null)) as { message?: string } | null;
+
+  if (!response.ok) {
+    throw new Error(payload?.message ?? "Unable to link notifications to this order.");
+  }
+}
+
 export function EnableOrderNotifications({
   orderId,
 }: EnableOrderNotificationsProps) {
-  const [requestState, setRequestState] = useState<RequestState>("idle");
+  const [linkState, setLinkState] = useState<LinkState>("idle");
+  const [permissionState, setPermissionState] = useState<SupportedPermissionState>(() =>
+    getPermissionState(),
+  );
   const [message, setMessage] = useState<string | null>(null);
-  const [hasExistingSubscription, setHasExistingSubscription] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
 
-    async function loadExistingSubscription() {
-      if (!getSupportedState() || Notification.permission !== "granted") {
+    async function autoLinkExistingSubscription() {
+      const nextPermissionState = getPermissionState();
+      if (cancelled) {
+        return;
+      }
+
+      setPermissionState(nextPermissionState);
+
+      if (nextPermissionState === "unsupported") {
+        setLinkState("error");
+        setMessage("This device or browser does not support web push notifications.");
+        return;
+      }
+
+      setLinkState("checking");
+      setMessage(null);
+
+      if (nextPermissionState !== "granted") {
         if (!cancelled) {
-          setHasExistingSubscription(false);
+          setLinkState("needs_permission");
         }
         return;
       }
 
       try {
-        const registration = await navigator.serviceWorker.getRegistration() ?? await navigator.serviceWorker.ready;
+        const registration = await ensureServiceWorkerRegistration();
         const existingSubscription = await registration.pushManager.getSubscription();
 
-        if (!cancelled) {
-          setHasExistingSubscription(Boolean(existingSubscription));
+        if (!existingSubscription) {
+          if (!cancelled) {
+            setLinkState("error");
+            setMessage(
+              "Notifications are allowed in this browser, but this order is not linked yet. Retry to finish linking it.",
+            );
+          }
+          return;
         }
-      } catch {
+
+        // Successive guest orders need a fresh order link even when the browser already
+        // has a valid PushSubscription from a previous order.
         if (!cancelled) {
-          setHasExistingSubscription(false);
+          setLinkState("linking");
+          setMessage("Linking this browser to your current order notifications...");
+        }
+
+        await linkSubscriptionToOrder(orderId, existingSubscription as PushSubscriptionWithJson);
+
+        if (!cancelled) {
+          setLinkState("linked");
+          setMessage(null);
+        }
+      } catch (error) {
+        logNotificationError("order_notification_auto_link_failed", orderId, error);
+
+        if (!cancelled) {
+          setLinkState("error");
+          setMessage(
+            error instanceof Error
+              ? error.message
+              : "We couldn't link notifications to this order. Retry to keep order-ready alerts working.",
+          );
         }
       }
     }
 
-    void loadExistingSubscription();
+    void autoLinkExistingSubscription();
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [orderId]);
 
   async function handleEnableNotifications() {
-    if (!getSupportedState()) {
-      setRequestState("error");
+    const nextPermissionState = getPermissionState();
+    setPermissionState(nextPermissionState);
+
+    if (nextPermissionState === "unsupported") {
+      setLinkState("error");
       setMessage("This device or browser does not support web push notifications.");
       return;
     }
 
     if (isIosDevice() && !isStandaloneMode()) {
-      setRequestState("error");
+      setLinkState("error");
       setMessage("On iPhone, install KiRA Bakery to your Home Screen before enabling notifications.");
       return;
     }
 
     const vapidPublicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY?.trim();
     if (!vapidPublicKey) {
-      setRequestState("error");
+      setLinkState("error");
       setMessage("Push notifications are not configured yet. Please try again later.");
       return;
     }
 
-    setRequestState("submitting");
-    setMessage(null);
+    setLinkState("linking");
+    setMessage("Linking notifications to this order...");
 
     try {
-      const permission = await Notification.requestPermission();
+      const permission = nextPermissionState === "granted"
+        ? nextPermissionState
+        : await Notification.requestPermission();
+
+      setPermissionState(permission);
+
       if (permission !== "granted") {
-        setRequestState("error");
+        setLinkState("needs_permission");
         setMessage(
           permission === "denied"
             ? "Notifications are blocked in this browser. Update your browser settings to turn them on."
@@ -109,14 +216,7 @@ export function EnableOrderNotifications({
         return;
       }
 
-      const existingRegistration = await navigator.serviceWorker.getRegistration();
-      const registration = existingRegistration
-        ?? await navigator.serviceWorker.register("/sw.js", {
-          updateViaCache: "none",
-        });
-
-      await navigator.serviceWorker.ready;
-
+      const registration = await ensureServiceWorkerRegistration();
       const existingSubscription = await registration.pushManager.getSubscription();
       const subscription = existingSubscription
         ?? await registration.pushManager.subscribe({
@@ -124,27 +224,13 @@ export function EnableOrderNotifications({
           applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
         });
 
-      const response = await fetch("/api/push/subscribe", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          ...subscription.toJSON(),
-          orderId,
-        }),
-      });
-      const payload = (await response.json().catch(() => null)) as { message?: string } | null;
+      await linkSubscriptionToOrder(orderId, subscription as PushSubscriptionWithJson);
 
-      if (!response.ok) {
-        throw new Error(payload?.message ?? "Unable to save your notification subscription.");
-      }
-
-      setRequestState("success");
-      setHasExistingSubscription(true);
-      setMessage("Notifications are enabled. We'll alert you as soon as your order is ready.");
+      setLinkState("linked");
+      setMessage(null);
     } catch (error) {
-      setRequestState("error");
+      logNotificationError("order_notification_link_failed", orderId, error);
+      setLinkState("error");
       setMessage(
         error instanceof Error
           ? error.message
@@ -153,9 +239,14 @@ export function EnableOrderNotifications({
     }
   }
 
-  if (hasExistingSubscription && requestState !== "success") {
+  if (linkState === "linked") {
     return null;
   }
+
+  const isBusy = linkState === "checking" || linkState === "linking";
+  const actionLabel = permissionState === "granted" && linkState === "error"
+    ? "Retry linking notifications"
+    : "Enable notifications";
 
   return (
     <Card className="rounded-[28px] border border-border/60 bg-surface-alt/40 shadow-[var(--shadow-soft)]">
@@ -169,30 +260,32 @@ export function EnableOrderNotifications({
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3 p-8 pt-0">
-        <Button
-          type="button"
-          onClick={() => {
-            void handleEnableNotifications();
-          }}
-          loading={requestState === "submitting"}
-          disabled={requestState === "success"}
-          variant="outline"
-          size="sm"
-          className="w-full sm:w-auto"
-        >
-          {requestState === "success" ? "Notifications enabled" : "Enable notifications"}
-        </Button>
-        {message && (
-          <p
-            className={
-              requestState === "success"
-                ? "text-sm text-emerald-700"
-                : "text-sm text-muted"
-            }
+        {!isBusy && (
+          <Button
+            type="button"
+            onClick={() => {
+              void handleEnableNotifications();
+            }}
+            variant="outline"
+            size="sm"
+            className="w-full sm:w-auto"
           >
-            {message}
-          </p>
+            {actionLabel}
+          </Button>
         )}
+        {isBusy && (
+          <Button
+            type="button"
+            loading
+            disabled
+            variant="outline"
+            size="sm"
+            className="w-full sm:w-auto"
+          >
+            {linkState === "checking" ? "Checking notifications" : "Linking notifications"}
+          </Button>
+        )}
+        {message && <p className="text-sm text-muted">{message}</p>}
       </CardContent>
     </Card>
   );

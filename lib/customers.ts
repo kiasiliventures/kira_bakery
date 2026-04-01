@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { User } from "@supabase/supabase-js";
+import { isStorefrontCustomerUser } from "@/lib/auth/customer-source";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 type CustomerRow = {
@@ -31,6 +32,12 @@ export async function ensureCustomerForUser(
   user: User,
   input?: EnsureCustomerInput,
 ): Promise<CustomerRow> {
+  if (!isStorefrontCustomerUser(user)) {
+    throw new Error(
+      "Authenticated account is not eligible for customer profile creation.",
+    );
+  }
+
   const email = normalizeText(user.email);
   if (!email) {
     throw new Error("Authenticated customer account is missing an email address.");

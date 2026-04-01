@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  CUSTOMER_ORIGIN_METADATA_KEY,
+  STOREFRONT_CUSTOMER_ORIGIN,
+} from "@/lib/auth/customer-source";
 
 const exchangeCodeForSessionMock = vi.fn();
+const getUserMock = vi.fn();
+const updateUserMock = vi.fn();
 const getSupabaseAuthServerClientMock = vi.fn();
 
 vi.mock("@/lib/supabase/server", () => ({
@@ -10,12 +16,26 @@ vi.mock("@/lib/supabase/server", () => ({
 describe("auth callback route", () => {
   beforeEach(() => {
     exchangeCodeForSessionMock.mockReset();
+    getUserMock.mockReset();
+    updateUserMock.mockReset();
     getSupabaseAuthServerClientMock.mockReset();
     getSupabaseAuthServerClientMock.mockResolvedValue({
       auth: {
         exchangeCodeForSession: exchangeCodeForSessionMock,
+        getUser: getUserMock,
+        updateUser: updateUserMock,
       },
     });
+    getUserMock.mockResolvedValue({
+      data: {
+        user: {
+          id: "customer-123",
+          user_metadata: {},
+        },
+      },
+      error: null,
+    });
+    updateUserMock.mockResolvedValue({ error: null });
   });
 
   it("redirects provider errors back to the originating auth page", async () => {
@@ -61,6 +81,29 @@ describe("auth callback route", () => {
     expect(response.headers.get("location")).toBe("https://example.com/menu");
     expect(getSupabaseAuthServerClientMock).toHaveBeenCalledTimes(1);
     expect(exchangeCodeForSessionMock).toHaveBeenCalledWith("oauth-code");
+    expect(getUserMock).not.toHaveBeenCalled();
+    expect(updateUserMock).not.toHaveBeenCalled();
+  });
+
+  it("marks Google sign-up accounts as storefront customers before redirecting", async () => {
+    exchangeCodeForSessionMock.mockResolvedValue({ error: null });
+
+    const { GET } = await import("@/app/auth/callback/route");
+
+    const response = await GET(
+      new Request(
+        "https://example.com/auth/callback?code=oauth-code&flow=sign-up&next=%2Fmenu",
+      ),
+    );
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe("https://example.com/menu");
+    expect(getUserMock).toHaveBeenCalledTimes(1);
+    expect(updateUserMock).toHaveBeenCalledWith({
+      data: {
+        [CUSTOMER_ORIGIN_METADATA_KEY]: STOREFRONT_CUSTOMER_ORIGIN,
+      },
+    });
   });
 
   it("sends exchange failures back to sign-in with the error message", async () => {

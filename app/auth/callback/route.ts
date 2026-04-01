@@ -1,4 +1,8 @@
 import { NextResponse } from "next/server";
+import {
+  isStorefrontCustomerUser,
+  mergeStorefrontCustomerMetadata,
+} from "@/lib/auth/customer-source";
 import { buildAuthErrorRedirectUrl, resolveAuthRedirectPath } from "@/lib/auth/redirect";
 import { getSupabaseAuthServerClient } from "@/lib/supabase/server";
 
@@ -45,6 +49,29 @@ export async function GET(request: Request) {
 
     if (error) {
       return redirectToAuthError(requestUrl, flow, nextPath, error.message);
+    }
+
+    if (flow === "sign-up") {
+      const { data, error: getUserError } = await supabase.auth.getUser();
+
+      if (getUserError || !data.user) {
+        return redirectToAuthError(
+          requestUrl,
+          flow,
+          nextPath,
+          getUserError?.message ?? "We couldn't finish setting up your customer account.",
+        );
+      }
+
+      if (!isStorefrontCustomerUser(data.user)) {
+        const { error: updateUserError } = await supabase.auth.updateUser({
+          data: mergeStorefrontCustomerMetadata(data.user.user_metadata),
+        });
+
+        if (updateUserError) {
+          return redirectToAuthError(requestUrl, flow, nextPath, updateUserError.message);
+        }
+      }
     }
   } catch {
     return redirectToAuthError(

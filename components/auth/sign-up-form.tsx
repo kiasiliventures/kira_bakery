@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { GoogleAuthButton } from "@/components/auth/google-auth-button";
+import { mergeStorefrontCustomerMetadata } from "@/lib/auth/customer-source";
 import { getSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -48,9 +49,9 @@ export function SignUpForm({ initialError = null, nextPath }: SignUpFormProps) {
       email,
       password,
       options: {
-        data: {
+        data: mergeStorefrontCustomerMetadata({
           full_name: fullName,
-        },
+        }),
       },
     });
 

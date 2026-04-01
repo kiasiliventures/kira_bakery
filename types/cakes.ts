@@ -51,6 +51,14 @@ export type CakeSelection = {
   toppingId: string;
 };
 
+export type CakeReferenceImage = {
+  bucket: string;
+  path: string;
+  originalFilename: string;
+  contentType: string;
+  sizeBytes: number;
+};
+
 export type CakeCustomRequestPayload = {
   customerName: string;
   phone: string;

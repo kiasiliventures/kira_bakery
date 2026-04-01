@@ -1,12 +1,13 @@
 "use client";
-
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { type ChangeEvent, type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { RefreshCcw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { validateCakeReferenceImageFile } from "@/lib/cake-reference-images";
 import {
   cakeRequestSchema,
   cakeSelectionFields,
@@ -14,12 +15,8 @@ import {
   matchesCakeSelection,
 } from "@/lib/cakes";
 import { formatUGX } from "@/lib/format";
-import type {
-  CakeConfig,
-  CakeCustomRequestPayload,
-  CakePrice,
-  CakeSelection,
-} from "@/types/cakes";
+import { cn } from "@/lib/utils";
+import type { CakeConfig, CakePrice, CakeSelection } from "@/types/cakes";
 
 type BuilderState = CakeSelection & {
   customerName: string;
@@ -75,6 +72,8 @@ export function CakeBuilderForm({
   const [config, setConfig] = useState<CakeConfig | null>(initialConfig);
   const [prices, setPrices] = useState<CakePrice[]>(initialPrices);
   const [form, setForm] = useState<BuilderState>(emptyState);
+  const [referenceImageFile, setReferenceImageFile] = useState<File | null>(null);
+  const [referencePreviewUrl, setReferencePreviewUrl] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [status, setStatus] = useState<{ tone: "idle" | "success" | "error"; text: string }>({
     tone: "idle",
@@ -82,7 +81,18 @@ export function CakeBuilderForm({
   });
   const [isLoading, setIsLoading] = useState(!(initialConfig && initialPrices.length > 0));
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const previewObjectUrlsRef = useRef(new Set<string>());
   const hasInitialData = Boolean(initialConfig && initialPrices.length > 0);
+
+  useEffect(() => {
+    const previewObjectUrls = previewObjectUrlsRef.current;
+
+    return () => {
+      previewObjectUrls.forEach((url) => URL.revokeObjectURL(url));
+      previewObjectUrls.clear();
+    };
+  }, []);
 
   useEffect(() => {
     if (hasInitialData) {
@@ -208,6 +218,35 @@ export function CakeBuilderForm({
     };
   }, [availableIds, config]);
 
+  function clearFileInput() {
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  }
+
+  function rememberObjectUrl(url: string) {
+    previewObjectUrlsRef.current.add(url);
+  }
+
+  function revokeObjectUrl(url: string | null) {
+    if (!url) {
+      return;
+    }
+
+    if (previewObjectUrlsRef.current.has(url)) {
+      URL.revokeObjectURL(url);
+      previewObjectUrlsRef.current.delete(url);
+    }
+  }
+
+  function clearReferenceImageSelection() {
+    revokeObjectUrl(referencePreviewUrl);
+    setReferencePreviewUrl(null);
+    setReferenceImageFile(null);
+    clearFileInput();
+    setErrors((current) => ({ ...current, referenceImage: "" }));
+  }
+
   const handleSelectionChange = (field: FieldName, value: string) => {
     setForm((current) => {
       const next = { ...current, [field]: value };
@@ -227,6 +266,28 @@ export function CakeBuilderForm({
     setErrors((current) => ({ ...current, [field]: "" }));
   };
 
+  const handleReferenceImageChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    clearFileInput();
+
+    if (!file) {
+      return;
+    }
+
+    const validationError = validateCakeReferenceImageFile(file);
+    if (validationError) {
+      setErrors((current) => ({ ...current, referenceImage: validationError }));
+      return;
+    }
+
+    const nextPreviewUrl = URL.createObjectURL(file);
+    rememberObjectUrl(nextPreviewUrl);
+    revokeObjectUrl(referencePreviewUrl);
+    setReferencePreviewUrl(nextPreviewUrl);
+    setReferenceImageFile(file);
+    setErrors((current) => ({ ...current, referenceImage: "" }));
+  };
+
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
@@ -235,7 +296,7 @@ export function CakeBuilderForm({
       return;
     }
 
-    const payload: CakeCustomRequestPayload = {
+    const payload = {
       customerName: form.customerName,
       phone: form.phone,
       email: form.email,
@@ -260,14 +321,30 @@ export function CakeBuilderForm({
       return;
     }
 
+    if (referenceImageFile) {
+      const referenceImageError = validateCakeReferenceImageFile(referenceImageFile);
+      if (referenceImageError) {
+        setErrors((current) => ({ ...current, referenceImage: referenceImageError }));
+        return;
+      }
+    }
+
     setIsSubmitting(true);
     setStatus({ tone: "idle", text: "" });
 
     try {
+      const body = new FormData();
+      for (const [key, value] of Object.entries(parsed.data)) {
+        body.set(key, value ?? "");
+      }
+
+      if (referenceImageFile) {
+        body.set("referenceImage", referenceImageFile);
+      }
+
       const response = await fetch("/api/cakes/custom-request", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(parsed.data),
+        body,
       });
 
       const responsePayload = (await response.json().catch(() => null)) as
@@ -278,6 +355,7 @@ export function CakeBuilderForm({
         throw new Error(responsePayload?.message ?? "Unable to submit your cake request.");
       }
 
+      clearReferenceImageSelection();
       setErrors({});
       setStatus({
         tone: "success",
@@ -285,15 +363,14 @@ export function CakeBuilderForm({
           ? `Cake request received. Reference: ${responsePayload.requestId}`
           : "Cake request received.",
       });
-      setForm((current) => ({
-        ...current,
-        customerName: "",
-        phone: "",
-        email: "",
-        eventDate: "",
-        messageOnCake: "",
-        notes: "",
-      }));
+      setForm({
+        ...emptyState,
+        flavourId: form.flavourId,
+        shapeId: form.shapeId,
+        sizeId: form.sizeId,
+        tierOptionId: form.tierOptionId,
+        toppingId: form.toppingId,
+      });
     } catch (error) {
       setStatus({
         tone: "error",
@@ -329,6 +406,15 @@ export function CakeBuilderForm({
       </Card>
     );
   }
+
+  const hasReferenceImage = Boolean(referencePreviewUrl && referenceImageFile);
+  const referenceImageSummary = hasReferenceImage
+    ? `${referenceImageFile?.name} selected. It will upload only when you submit the request.`
+    : "JPG, PNG, or WebP up to 5 MB.";
+  const referenceSummaryClassName = cn(
+    "text-sm",
+    hasReferenceImage ? "text-badge-foreground" : "text-muted",
+  );
 
   return (
     <form onSubmit={submit} className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
@@ -418,6 +504,81 @@ export function CakeBuilderForm({
             />
             {errors.eventDate && <p className="text-xs text-danger">{errors.eventDate}</p>}
           </div>
+
+          <section className="space-y-4 md:col-span-2" aria-labelledby="reference-image-title">
+            <div className="space-y-1">
+              <h2 id="reference-image-title" className="font-serif text-2xl text-foreground">
+                Reference Image
+              </h2>
+              <p className="text-sm text-muted">
+                Optional. Upload a design sample or inspiration photo.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap gap-3">
+              <Button
+                type="button"
+                variant={hasReferenceImage ? "outline" : "default"}
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isSubmitting}
+              >
+                {hasReferenceImage ? "Change Selected Image" : "Choose Image"}
+              </Button>
+            </div>
+
+            {hasReferenceImage && referencePreviewUrl ? (
+              <div
+                className="max-w-xl overflow-hidden transition-all duration-300 ease-out"
+              >
+                <div className="rounded-[28px] border border-border bg-surface-alt/40 p-4">
+                  <div className="aspect-square overflow-hidden rounded-2xl">
+                    <div className="relative h-full w-full overflow-hidden rounded-2xl bg-surface">
+                      <img
+                        src={referencePreviewUrl}
+                        alt="Reference image preview"
+                        className="h-full w-full object-cover"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap gap-3">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={clearReferenceImageSelection}
+                      disabled={!hasReferenceImage || isSubmitting}
+                    >
+                      <Trash2 className="h-4 w-4" aria-hidden />
+                      Remove
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={!hasReferenceImage || isSubmitting}
+                    >
+                      <RefreshCcw className="h-4 w-4" aria-hidden />
+                      Replace
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            <input
+              ref={fileInputRef}
+              id="referenceImage"
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              className="sr-only"
+              onChange={handleReferenceImageChange}
+            />
+
+            <p className={referenceSummaryClassName} aria-live="polite">
+              {referenceImageSummary}
+            </p>
+            {errors.referenceImage && <p className="text-xs text-danger">{errors.referenceImage}</p>}
+          </section>
         </CardContent>
       </Card>
 

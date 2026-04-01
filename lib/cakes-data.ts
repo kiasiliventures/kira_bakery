@@ -1,7 +1,13 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import type { CakeConfig, CakeConfigOption, CakePrice, CakeTierOption } from "@/types/cakes";
+import type {
+  CakeConfig,
+  CakeConfigOption,
+  CakePrice,
+  CakeReferenceImage,
+  CakeTierOption,
+} from "@/types/cakes";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 type CakeOptionRow = {
@@ -216,26 +222,36 @@ export async function getCakePrices(): Promise<CakePrice[]> {
 }
 
 export async function createCakeCustomRequest(input: {
+  requestId: string;
   customerName: string;
   phone: string;
   email?: string;
   notes?: string;
   eventDate: string;
   messageOnCake?: string;
+  referenceImage?: CakeReferenceImage;
   price: CakePrice;
 }) {
   const supabase = getSupabaseServerClient();
   const { data, error } = await supabase
     .from("cake_custom_requests")
     .insert({
+      id: input.requestId,
       customer_name: input.customerName,
       phone: input.phone,
       email: input.email || null,
       notes: input.notes || null,
+      reference_image_bucket: input.referenceImage?.bucket ?? null,
+      reference_image_path: input.referenceImage?.path ?? null,
+      reference_image_original_name: input.referenceImage?.originalFilename ?? null,
+      reference_image_content_type: input.referenceImage?.contentType ?? null,
+      reference_image_size_bytes: input.referenceImage?.sizeBytes ?? null,
+      reference_image_uploaded_at: input.referenceImage ? new Date().toISOString() : null,
       source_note: "client_pwa_cake_builder",
       request_payload: {
         eventDate: input.eventDate,
         messageOnCake: input.messageOnCake || "",
+        referenceImage: input.referenceImage ?? null,
         priceId: input.price.id,
         priceUgx: input.price.priceUgx,
         weightKg: input.price.weightKg,

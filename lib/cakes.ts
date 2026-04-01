@@ -20,6 +20,28 @@ export const cakeRequestSchema = z.object({
 
 export type CakeRequestInput = z.infer<typeof cakeRequestSchema>;
 
+function getFormDataStringValue(formData: FormData, fieldName: keyof CakeRequestInput) {
+  const value = formData.get(fieldName);
+  return typeof value === "string" ? value : "";
+}
+
+export function parseCakeRequestFormData(formData: FormData): CakeRequestInput {
+  return {
+    customerName: getFormDataStringValue(formData, "customerName"),
+    phone: getFormDataStringValue(formData, "phone"),
+    email: getFormDataStringValue(formData, "email"),
+    eventDate: getFormDataStringValue(formData, "eventDate"),
+    messageOnCake: getFormDataStringValue(formData, "messageOnCake"),
+    notes: getFormDataStringValue(formData, "notes"),
+    priceId: getFormDataStringValue(formData, "priceId"),
+    flavourId: getFormDataStringValue(formData, "flavourId"),
+    shapeId: getFormDataStringValue(formData, "shapeId"),
+    sizeId: getFormDataStringValue(formData, "sizeId"),
+    tierOptionId: getFormDataStringValue(formData, "tierOptionId"),
+    toppingId: getFormDataStringValue(formData, "toppingId"),
+  };
+}
+
 export const cakeSelectionFields = [
   "shapeId",
   "sizeId",

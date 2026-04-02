@@ -89,6 +89,10 @@ const securityHeaders = [
 const nextConfig: NextConfig = {
   images: {
     remotePatterns,
+    deviceSizes: [384, 640, 768, 1024, 1280],
+    imageSizes: [80, 160, 240, 288, 320],
+    formats: ["image/webp"],
+    qualities: [65, 70, 75],
   },
   async headers() {
     return [

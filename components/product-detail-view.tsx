@@ -1,9 +1,9 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { useState } from "react";
 import { useCart } from "@/components/providers/app-provider";
+import { StorefrontProductImage } from "@/components/storefront-product-image";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
@@ -38,22 +38,13 @@ export function ProductDetailView({ product }: ProductDetailViewProps) {
 
   return (
     <section className="grid gap-8 lg:grid-cols-2">
-      <div className="relative h-[360px] overflow-hidden rounded-2xl bg-surface-alt md:h-[480px]">
-        {imageSrc ? (
-          <Image
-            src={imageSrc}
-            alt={product.name}
-            fill
-            className="object-cover"
-            priority
-            onError={() => setImageSrc("")}
-          />
-        ) : (
-          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-            No product image
-          </div>
-        )}
-      </div>
+      <StorefrontProductImage
+        src={imageSrc}
+        alt={product.name}
+        variant="detail"
+        priority
+        onError={() => setImageSrc("")}
+      />
       <Card>
         <CardContent className="space-y-5 p-6">
           <p className="text-sm uppercase tracking-wide text-badge-foreground">{product.category}</p>

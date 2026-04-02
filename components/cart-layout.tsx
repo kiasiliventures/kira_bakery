@@ -1,9 +1,9 @@
 "use client";
 
-import Image from "next/image";
 import { useState, useSyncExternalStore } from "react";
 import { Minus, Plus, ShoppingCart, Trash2, X } from "lucide-react";
 import { getCartLineKey, useCart } from "@/components/providers/app-provider";
+import { StorefrontProductImage } from "@/components/storefront-product-image";
 import { CheckoutForm } from "@/components/checkout-form";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -69,13 +69,7 @@ export function CartLayout() {
                 className="flex items-center gap-3 rounded-xl border border-border bg-surface-alt p-3"
               >
                 <div className="relative h-20 w-20 overflow-hidden rounded-xl">
-                  <Image
-                    src={item.image}
-                    alt={item.name}
-                    fill
-                    className="object-cover"
-                    sizes="80px"
-                  />
+                  <StorefrontProductImage src={item.image} alt={item.name} variant="thumb" />
                 </div>
                 <div className="flex-1">
                   <p className="font-medium text-foreground">{item.name}</p>

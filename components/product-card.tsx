@@ -1,10 +1,10 @@
-import Image from "next/image";
 import Link from "next/link";
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { useCart } from "@/components/providers/app-provider";
+import { StorefrontProductImage } from "@/components/storefront-product-image";
 import { formatUGX } from "@/lib/format";
 import {
   getProductPriceRange,
@@ -30,22 +30,14 @@ export function ProductCard({ product }: ProductCardProps) {
   return (
     <Card className="overflow-hidden">
       <Link href={`/menu/${product.id}`} className="block">
-        <div className="relative h-52 w-full bg-surface-alt">
-          {imageSrc ? (
-            <Image
-              src={imageSrc}
-              alt={product.name}
-              fill
-              className="rounded-t-2xl object-cover"
-              sizes="(max-width: 768px) 100vw, 33vw"
-              onError={() => setImageSrc("")}
-            />
-          ) : (
-            <div className="flex h-full items-center justify-center rounded-t-2xl text-sm text-muted-foreground">
-              No product image
-            </div>
-          )}
-        </div>
+        <StorefrontProductImage
+          src={imageSrc}
+          alt={product.name}
+          variant="card"
+          className="rounded-t-2xl"
+          imageClassName="rounded-t-2xl"
+          onError={() => setImageSrc("")}
+        />
       </Link>
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between gap-2">

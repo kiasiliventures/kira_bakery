@@ -87,7 +87,7 @@ export default async function HomePage() {
               key={category}
               name={category}
               href="/menu"
-              image={categoryImages[category]}
+              images={categoryImages[category]}
             />
           ))}
         </div>

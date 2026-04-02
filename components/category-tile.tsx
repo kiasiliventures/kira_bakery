@@ -1,13 +1,29 @@
+"use client";
+
 import Link from "next/link";
+import { useState } from "react";
 import { StorefrontProductImage } from "@/components/storefront-product-image";
 
 type CategoryTileProps = {
   name: string;
-  image?: string;
+  images?: string[];
   href: string;
 };
 
-export function CategoryTile({ name, image, href }: CategoryTileProps) {
+export function CategoryTile({ name, images = [], href }: CategoryTileProps) {
+  const [imageIndex, setImageIndex] = useState(0);
+  const image = images[imageIndex];
+
+  function handleImageError() {
+    setImageIndex((current) => {
+      if (current >= images.length - 1) {
+        return current;
+      }
+
+      return current + 1;
+    });
+  }
+
   return (
     <Link href={href}>
       <div className="group relative overflow-hidden rounded-2xl shadow-[var(--shadow-soft)] transition-transform duration-200 hover:-translate-y-0.5">
@@ -16,6 +32,7 @@ export function CategoryTile({ name, image, href }: CategoryTileProps) {
           alt={name}
           variant="category"
           imageClassName="transition-transform duration-300 group-hover:scale-105"
+          onError={handleImageError}
           fallback={
             <div
               className="h-full w-full"

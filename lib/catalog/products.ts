@@ -221,9 +221,9 @@ export async function getCachedCatalogProductById(id: string): Promise<Product |
 }
 
 export async function getCachedCategoryImages(): Promise<
-  Partial<Record<ProductCategory, string>>
+  Partial<Record<ProductCategory, string[]>>
 > {
-  const result: Partial<Record<ProductCategory, string>> = {};
+  const result: Partial<Record<ProductCategory, string[]>> = {};
 
   let products: Product[];
   try {
@@ -279,9 +279,13 @@ export async function getCachedCategoryImages(): Promise<
     );
 
     if (images.length > 0) {
-      // Monday-based Kampala weeks keep each category image stable for the whole week,
-      // and modulo selection stays deterministic across cache revalidation windows.
-      result[category] = images[bucket % images.length];
+      // Monday-based Kampala weeks keep the leading image stable for the whole week,
+      // while preserving the rest of the ordered candidates as client-side fallbacks.
+      const startIndex = bucket % images.length;
+      result[category] = [
+        ...images.slice(startIndex),
+        ...images.slice(0, startIndex),
+      ];
     }
   }
 

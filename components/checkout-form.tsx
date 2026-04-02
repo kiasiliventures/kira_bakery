@@ -29,6 +29,33 @@ type CheckoutSubmitState =
   | "redirecting"
   | "error";
 
+const MIN_PLACING_ORDER_STATE_MS = 250;
+const MIN_PREPARING_PAYMENT_STATE_MS = 250;
+const REDIRECTING_PAINT_DELAY_MS = 120;
+
+function wait(ms: number) {
+  return new Promise<void>((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
+function waitForNextPaint() {
+  return new Promise<void>((resolve) => {
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        resolve();
+      });
+    });
+  });
+}
+
+async function waitForMinimumStateDuration(startedAt: number, minimumMs: number) {
+  const elapsed = performance.now() - startedAt;
+  if (elapsed < minimumMs) {
+    await wait(minimumMs - elapsed);
+  }
+}
+
 function getOrCreateCheckoutSessionToken() {
   if (typeof window === "undefined") {
     return "";
@@ -168,7 +195,9 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
     }
 
     updateSubmitState("placing_order");
+    const placingOrderStartedAt = performance.now();
     setErrors({});
+    await waitForNextPaint();
 
     const idempotencyKey = idempotencyKeyRef.current ?? crypto.randomUUID();
     const checkoutSessionToken = getOrCreateCheckoutSessionToken();
@@ -208,16 +237,25 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
         return;
       }
 
+      await waitForMinimumStateDuration(placingOrderStartedAt, MIN_PLACING_ORDER_STATE_MS);
       updateSubmitState("preparing_payment");
+      const preparingPaymentStartedAt = performance.now();
       idempotencyKeyRef.current = null;
+      await waitForNextPaint();
       if (payload?.redirectUrl) {
+        await waitForMinimumStateDuration(preparingPaymentStartedAt, MIN_PREPARING_PAYMENT_STATE_MS);
         updateSubmitState("redirecting");
+        await waitForNextPaint();
+        await wait(REDIRECTING_PAINT_DELAY_MS);
         window.location.assign(payload.redirectUrl);
         return;
       }
 
       if (payload?.id) {
+        await waitForMinimumStateDuration(preparingPaymentStartedAt, MIN_PREPARING_PAYMENT_STATE_MS);
         updateSubmitState("redirecting");
+        await waitForNextPaint();
+        await wait(REDIRECTING_PAINT_DELAY_MS);
         const params = new URLSearchParams({
           orderId: payload.id,
         });

@@ -22,6 +22,13 @@ type CheckoutFormProps = {
   compact?: boolean;
 };
 
+type CheckoutSubmitState =
+  | "idle"
+  | "placing_order"
+  | "preparing_payment"
+  | "redirecting"
+  | "error";
+
 function getOrCreateCheckoutSessionToken() {
   if (typeof window === "undefined") {
     return "";
@@ -42,7 +49,7 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
   const { items, subtotalUGX } = useCart();
   const minimumDeliveryDate = getCheckoutMinimumDateValue();
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitState, setSubmitState] = useState<CheckoutSubmitState>("idle");
   const [deliveryLocation, setDeliveryLocation] = useState<DeliveryResolvedLocation | null>(null);
   const [deliveryQuote, setDeliveryQuote] = useState<DeliveryQuote | null>(null);
   const [isDeliveryQuotePending, setIsDeliveryQuotePending] = useState(false);
@@ -50,6 +57,8 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
     "delivery",
   );
   const idempotencyKeyRef = useRef<string | null>(null);
+  const submitStateRef = useRef<CheckoutSubmitState>("idle");
+  const pickupResetTimeoutRef = useRef<number | null>(null);
   const deliveryFeeUGX = deliveryMethod === "delivery" ? deliveryQuote?.deliveryFee ?? 0 : 0;
   const totalUGX = subtotalUGX + deliveryFeeUGX;
   const requiresDeliveryQuote = deliveryMethod === "delivery";
@@ -57,20 +66,48 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
     deliveryLocation && deliveryQuote && !isDeliveryQuotePending,
   );
 
+  function updateSubmitState(nextState: CheckoutSubmitState) {
+    submitStateRef.current = nextState;
+    setSubmitState(nextState);
+  }
+
+  function resetSubmitStateAfterError() {
+    window.setTimeout(() => {
+      if (submitStateRef.current === "error") {
+        updateSubmitState("idle");
+      }
+    }, 0);
+  }
+
   useEffect(() => {
+    if (pickupResetTimeoutRef.current !== null) {
+      window.clearTimeout(pickupResetTimeoutRef.current);
+      pickupResetTimeoutRef.current = null;
+    }
+
     if (deliveryMethod !== "pickup") {
       return;
     }
 
-    setDeliveryLocation(null);
-    setDeliveryQuote(null);
-    setIsDeliveryQuotePending(false);
-    setErrors((previous) => {
-      const nextErrors = { ...previous };
-      delete nextErrors.address;
-      delete nextErrors.deliveryDate;
-      return nextErrors;
-    });
+    pickupResetTimeoutRef.current = window.setTimeout(() => {
+      setDeliveryLocation(null);
+      setDeliveryQuote(null);
+      setIsDeliveryQuotePending(false);
+      setErrors((previous) => {
+        const nextErrors = { ...previous };
+        delete nextErrors.address;
+        delete nextErrors.deliveryDate;
+        return nextErrors;
+      });
+      pickupResetTimeoutRef.current = null;
+    }, 0);
+
+    return () => {
+      if (pickupResetTimeoutRef.current !== null) {
+        window.clearTimeout(pickupResetTimeoutRef.current);
+        pickupResetTimeoutRef.current = null;
+      }
+    };
   }, [deliveryMethod]);
 
   function clearFieldError(field: string) {
@@ -86,6 +123,10 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
   }
 
   const onSubmit = async (formData: FormData) => {
+    if (submitStateRef.current !== "idle") {
+      return;
+    }
+
     if (requiresDeliveryQuote && !hasValidDeliveryQuote) {
       setErrors((previous) => ({
         ...previous,
@@ -126,7 +167,7 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
       return;
     }
 
-    setIsSubmitting(true);
+    updateSubmitState("placing_order");
     setErrors({});
 
     const idempotencyKey = idempotencyKeyRef.current ?? crypto.randomUUID();
@@ -162,16 +203,21 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
 
       if (!response.ok) {
         setErrors({ form: payload?.message ?? "Unable to place order. Please try again." });
+        updateSubmitState("error");
+        resetSubmitStateAfterError();
         return;
       }
 
+      updateSubmitState("preparing_payment");
       idempotencyKeyRef.current = null;
       if (payload?.redirectUrl) {
+        updateSubmitState("redirecting");
         window.location.assign(payload.redirectUrl);
         return;
       }
 
       if (payload?.id) {
+        updateSubmitState("redirecting");
         const params = new URLSearchParams({
           orderId: payload.id,
         });
@@ -180,12 +226,23 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
       }
 
       setErrors({ form: "Payment link missing. Please try again." });
+      updateSubmitState("error");
+      resetSubmitStateAfterError();
     } catch {
       setErrors({ form: "Network issue while placing order. Retry once and we will avoid duplicates." });
-    } finally {
-      setIsSubmitting(false);
+      updateSubmitState("error");
+      resetSubmitStateAfterError();
     }
   };
+
+  const submitButtonLabel =
+    submitState === "placing_order"
+      ? "Placing order..."
+      : submitState === "preparing_payment"
+        ? "Preparing payment..."
+        : submitState === "redirecting"
+          ? "Redirecting to payment..."
+          : "Pay with Pesapal";
 
   return (
     <form action={onSubmit} className="space-y-4">
@@ -304,8 +361,14 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
               ? "Kindly note: deliveries after 7:00 PM will be scheduled for the following day."
               : "Choose a verified location before placing a delivery order."}
         </p>
-        <Button disabled={items.length === 0 || isSubmitting || (requiresDeliveryQuote && !hasValidDeliveryQuote)}>
-          {isSubmitting ? "Redirecting..." : "Pay with Pesapal"}
+        <Button
+          disabled={
+            items.length === 0
+            || submitState !== "idle"
+            || (requiresDeliveryQuote && !hasValidDeliveryQuote)
+          }
+        >
+          {submitButtonLabel}
         </Button>
       </div>
       <p className="text-xs text-muted">

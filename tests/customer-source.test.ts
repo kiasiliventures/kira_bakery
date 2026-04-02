@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   CUSTOMER_ORIGIN_METADATA_KEY,
   STOREFRONT_CUSTOMER_ORIGIN,
+  isProvisionedPrivilegedUser,
   isStorefrontCustomerUser,
   mergeStorefrontCustomerMetadata,
+  shouldBackfillStorefrontCustomerOrigin,
 } from "@/lib/auth/customer-source";
 
 describe("customer source helpers", () => {
@@ -33,6 +35,54 @@ describe("customer source helpers", () => {
           [CUSTOMER_ORIGIN_METADATA_KEY]: "backoffice",
         },
       }),
+    ).toBe(false);
+  });
+
+  it("identifies admin-provisioned privileged users from app metadata", () => {
+    expect(
+      isProvisionedPrivilegedUser({
+        app_metadata: {
+          role: "staff",
+          provisioned_by_admin: true,
+        },
+      } as never),
+    ).toBe(true);
+
+    expect(
+      isProvisionedPrivilegedUser({
+        app_metadata: {
+          role: "staff",
+          provisioned_by_admin: false,
+        },
+      } as never),
+    ).toBe(false);
+  });
+
+  it("backfills storefront customer origin only for non-privileged users", () => {
+    expect(
+      shouldBackfillStorefrontCustomerOrigin({
+        user_metadata: {},
+        app_metadata: {},
+      } as never),
+    ).toBe(true);
+
+    expect(
+      shouldBackfillStorefrontCustomerOrigin({
+        user_metadata: {
+          [CUSTOMER_ORIGIN_METADATA_KEY]: STOREFRONT_CUSTOMER_ORIGIN,
+        },
+        app_metadata: {},
+      } as never),
+    ).toBe(false);
+
+    expect(
+      shouldBackfillStorefrontCustomerOrigin({
+        user_metadata: {},
+        app_metadata: {
+          role: "manager",
+          provisioned_by_admin: true,
+        },
+      } as never),
     ).toBe(false);
   });
 });

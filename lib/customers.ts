@@ -1,7 +1,11 @@
 import "server-only";
 
 import type { User } from "@supabase/supabase-js";
-import { isStorefrontCustomerUser } from "@/lib/auth/customer-source";
+import {
+  isProvisionedPrivilegedUser,
+  isStorefrontCustomerUser,
+  mergeStorefrontCustomerMetadata,
+} from "@/lib/auth/customer-source";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 type CustomerRow = {
@@ -18,6 +22,12 @@ type EnsureCustomerInput = {
   defaultAddress?: string | null;
 };
 
+type ProfileRoleRow = {
+  role: string | null;
+};
+
+const PRIVILEGED_PROFILE_ROLES = new Set(["admin", "manager", "staff"]);
+
 function normalizeText(value: string | null | undefined) {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
@@ -28,22 +38,59 @@ function resolveFullName(user: User, checkoutName?: string | null) {
   return normalizeText(checkoutName) ?? normalizeText(userMetadata?.full_name) ?? null;
 }
 
+function isPrivilegedProfileRole(role: string | null | undefined) {
+  const normalized = normalizeText(role)?.toLowerCase();
+  return normalized ? PRIVILEGED_PROFILE_ROLES.has(normalized) : false;
+}
+
 export async function ensureCustomerForUser(
   user: User,
   input?: EnsureCustomerInput,
 ): Promise<CustomerRow> {
-  if (!isStorefrontCustomerUser(user)) {
+  if (!isStorefrontCustomerUser(user) && isProvisionedPrivilegedUser(user)) {
     throw new Error(
       "Authenticated account is not eligible for customer profile creation.",
     );
   }
 
-  const email = normalizeText(user.email);
-  if (!email) {
-    throw new Error("Authenticated customer account is missing an email address.");
+  const supabase = getSupabaseServerClient();
+
+  if (!isStorefrontCustomerUser(user)) {
+    const { data: existingProfile, error: existingProfileError } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    if (existingProfileError) {
+      throw new Error(
+        `Unable to verify authenticated account role: ${existingProfileError.message}`,
+      );
+    }
+
+    if (isPrivilegedProfileRole((existingProfile as ProfileRoleRow | null)?.role)) {
+      throw new Error(
+        "Authenticated account is not eligible for customer profile creation.",
+      );
+    }
+
+    const { error: updateUserError } = await supabase.auth.admin.updateUserById(user.id, {
+      user_metadata: mergeStorefrontCustomerMetadata(user.user_metadata),
+    });
+
+    if (updateUserError) {
+      throw new Error(
+        `Unable to mark authenticated account as a storefront customer: ${updateUserError.message}`,
+      );
+    }
   }
 
-  const supabase = getSupabaseServerClient();
+  const email = normalizeText(user.email);
+  if (!email) {
+    throw new Error(
+      "Authenticated customer account is missing an email address.",
+    );
+  }
   const payload: Record<string, string> = {
     id: user.id,
     email,

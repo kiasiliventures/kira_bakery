@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import {
-  isStorefrontCustomerUser,
   mergeStorefrontCustomerMetadata,
+  shouldBackfillStorefrontCustomerOrigin,
 } from "@/lib/auth/customer-source";
 import { buildAuthErrorRedirectUrl, resolveAuthRedirectPath } from "@/lib/auth/redirect";
 import { getSupabaseAuthServerClient } from "@/lib/supabase/server";
@@ -51,7 +51,7 @@ export async function GET(request: Request) {
       return redirectToAuthError(requestUrl, flow, nextPath, error.message);
     }
 
-    if (flow === "sign-up") {
+    if (flow === "sign-up" || flow === "sign-in") {
       const { data, error: getUserError } = await supabase.auth.getUser();
 
       if (getUserError || !data.user) {
@@ -63,7 +63,7 @@ export async function GET(request: Request) {
         );
       }
 
-      if (!isStorefrontCustomerUser(data.user)) {
+      if (shouldBackfillStorefrontCustomerOrigin(data.user)) {
         const { error: updateUserError } = await supabase.auth.updateUser({
           data: mergeStorefrontCustomerMetadata(data.user.user_metadata),
         });

@@ -106,6 +106,56 @@ describe("auth callback route", () => {
     });
   });
 
+  it("marks Google sign-in accounts as storefront customers before redirecting when metadata is missing", async () => {
+    exchangeCodeForSessionMock.mockResolvedValue({ error: null });
+
+    const { GET } = await import("@/app/auth/callback/route");
+
+    const response = await GET(
+      new Request(
+        "https://example.com/auth/callback?code=oauth-code&flow=sign-in&next=%2Faccount%2Forders",
+      ),
+    );
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe("https://example.com/account/orders");
+    expect(getUserMock).toHaveBeenCalledTimes(1);
+    expect(updateUserMock).toHaveBeenCalledWith({
+      data: {
+        [CUSTOMER_ORIGIN_METADATA_KEY]: STOREFRONT_CUSTOMER_ORIGIN,
+      },
+    });
+  });
+
+  it("does not rewrite admin-provisioned accounts during Google sign-in", async () => {
+    exchangeCodeForSessionMock.mockResolvedValue({ error: null });
+    getUserMock.mockResolvedValue({
+      data: {
+        user: {
+          id: "staff-123",
+          user_metadata: {},
+          app_metadata: {
+            role: "staff",
+            provisioned_by_admin: true,
+          },
+        },
+      },
+      error: null,
+    });
+
+    const { GET } = await import("@/app/auth/callback/route");
+
+    const response = await GET(
+      new Request(
+        "https://example.com/auth/callback?code=oauth-code&flow=sign-in&next=%2Fmenu",
+      ),
+    );
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe("https://example.com/menu");
+    expect(updateUserMock).not.toHaveBeenCalled();
+  });
+
   it("sends exchange failures back to sign-in with the error message", async () => {
     exchangeCodeForSessionMock.mockResolvedValue({
       error: {

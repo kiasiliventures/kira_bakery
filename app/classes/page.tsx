@@ -1,6 +1,16 @@
+import type { Metadata } from "next";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+
+export const metadata: Metadata = {
+  title: "Baking Classes",
+  description:
+    "Explore KiRA Bakery baking classes covering artisan bread, croissants, and cake decoration.",
+  alternates: {
+    canonical: "/classes",
+  },
+};
 
 const classItems = [
   {

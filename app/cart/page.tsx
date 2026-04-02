@@ -1,4 +1,14 @@
+import type { Metadata } from "next";
 import { CartLayout } from "@/components/cart-layout";
+
+export const metadata: Metadata = {
+  title: "Cart",
+  description: "Review your cart and proceed to checkout.",
+  robots: {
+    index: false,
+    follow: false,
+  },
+};
 
 export default function CartPage() {
   return (

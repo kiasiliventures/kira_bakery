@@ -1,6 +1,15 @@
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { MyOrdersList } from "@/components/orders/my-orders-list";
 import { getAuthenticatedUser } from "@/lib/supabase/server";
+
+export const metadata: Metadata = {
+  title: "My Orders",
+  robots: {
+    index: false,
+    follow: false,
+  },
+};
 
 export default async function AccountOrdersPage() {
   const user = await getAuthenticatedUser();

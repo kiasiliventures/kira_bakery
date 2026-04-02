@@ -1,14 +1,44 @@
+import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { CategoryTile } from "@/components/category-tile";
 import { getCachedCategoryImages } from "@/lib/catalog/products";
+import { getAbsoluteUrl } from "@/lib/site";
 import { PRODUCT_CATEGORIES } from "@/types/product";
+
+export const metadata: Metadata = {
+  title: "Bakery in Kira, Uganda",
+  description:
+    "Discover fresh bread, celebration cakes, pastries, and more from KiRA Bakery in Kira, Uganda.",
+  alternates: {
+    canonical: "/",
+  },
+};
 
 export default async function HomePage() {
   const categoryImages = await getCachedCategoryImages();
+  const localBusinessJsonLd = {
+    "@context": "https://schema.org",
+    "@type": "Bakery",
+    name: "KiRA Bakery",
+    url: getAbsoluteUrl("/"),
+    image: getAbsoluteUrl("/images/hero_image_3.jpg"),
+    telephone: "+256774624180",
+    email: "kirabakery@gmail.com",
+    address: {
+      "@type": "PostalAddress",
+      streetAddress: "Kito village, Mamerito Mugerwa Road",
+      addressLocality: "Kira",
+      addressCountry: "UG",
+    },
+  };
 
   return (
     <div className="space-y-12">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(localBusinessJsonLd) }}
+      />
       <section className="relative left-1/2 right-1/2 -mx-[50vw] min-h-[560px] w-screen overflow-hidden">
         <Image
           src="/images/hero_image_3.jpg"

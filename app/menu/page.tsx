@@ -1,5 +1,15 @@
+import type { Metadata } from "next";
 import { MenuCatalog } from "@/components/menu-catalog";
 import { getCachedCatalogProducts } from "@/lib/catalog/products";
+
+export const metadata: Metadata = {
+  title: "Menu",
+  description:
+    "Browse the KiRA Bakery menu for breads, cakes, pastries, yoghurt, and other freshly baked treats.",
+  alternates: {
+    canonical: "/menu",
+  },
+};
 
 export default async function MenuPage() {
   const products = await getCachedCatalogProducts();

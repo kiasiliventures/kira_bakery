@@ -8,6 +8,7 @@ import { AppProvider } from "@/components/providers/app-provider";
 import { PwaRegister } from "@/components/pwa-register";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
+import { getAbsoluteUrl, getSiteUrl } from "@/lib/site";
 import "./globals.css";
 
 const notoSerif = Noto_Serif({
@@ -42,9 +43,41 @@ const themeScript = `
 `;
 
 export const metadata: Metadata = {
-  title: "KiRA Bakery",
-  description: "Freshly Baked Everyday",
+  metadataBase: getSiteUrl(),
+  title: {
+    default: "KiRA Bakery | Freshly Baked Everyday in Kira, Uganda",
+    template: "%s | KiRA Bakery",
+  },
+  description:
+    "Order fresh bread, cakes, pastries, yoghurt, and bakery treats from KiRA Bakery in Kira, Uganda.",
   manifest: "/manifest.webmanifest",
+  alternates: {
+    canonical: "/",
+  },
+  openGraph: {
+    type: "website",
+    locale: "en_UG",
+    url: "/",
+    siteName: "KiRA Bakery",
+    title: "KiRA Bakery | Freshly Baked Everyday in Kira, Uganda",
+    description:
+      "Order fresh bread, cakes, pastries, yoghurt, and bakery treats from KiRA Bakery in Kira, Uganda.",
+    images: [
+      {
+        url: getAbsoluteUrl("/images/hero_image_3.jpg"),
+        width: 1600,
+        height: 1067,
+        alt: "Fresh bread and pastries from KiRA Bakery",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "KiRA Bakery | Freshly Baked Everyday in Kira, Uganda",
+    description:
+      "Order fresh bread, cakes, pastries, yoghurt, and bakery treats from KiRA Bakery in Kira, Uganda.",
+    images: [getAbsoluteUrl("/images/hero_image_3.jpg")],
+  },
   appleWebApp: {
     capable: true,
     title: "KiRA Bakery",

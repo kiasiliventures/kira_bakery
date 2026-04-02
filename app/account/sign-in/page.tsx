@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { SignInForm } from "@/components/auth/sign-in-form";
 import {
@@ -5,6 +6,14 @@ import {
   resolveAuthRedirectPath,
 } from "@/lib/auth/redirect";
 import { getAuthenticatedUser } from "@/lib/supabase/server";
+
+export const metadata: Metadata = {
+  title: "Sign In",
+  robots: {
+    index: false,
+    follow: false,
+  },
+};
 
 export default async function SignInPage({
   searchParams,

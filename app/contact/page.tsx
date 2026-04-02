@@ -1,6 +1,16 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+
+export const metadata: Metadata = {
+  title: "Contact",
+  description:
+    "Find KiRA Bakery in Kira, Uganda and contact us by phone, email, WhatsApp, or Google Maps.",
+  alternates: {
+    canonical: "/contact",
+  },
+};
 
 export default function ContactPage() {
   const address = "Kito village, Mamerito Mugerwa Road, Kira, Uganda";

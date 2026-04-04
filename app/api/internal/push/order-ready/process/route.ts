@@ -27,7 +27,7 @@ function getCronSecret() {
 }
 
 function isCronAuthorized(request: Request) {
-  return getBearerToken(request) === getCronSecret();
+  return extractBearerToken(request) === getCronSecret();
 }
 
 export async function POST(request: Request) {

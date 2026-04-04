@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getRequiredEnv, type PaymentProviderName } from "@/lib/payments/config";
+import { fetchWithTimeout } from "@/lib/http/fetch";
 import type {
   PaymentGateway,
   PaymentInitiationInput,
@@ -28,6 +29,7 @@ type DpoVerifyTokenResponse = {
 };
 
 const provider: PaymentProviderName = "dpo";
+const DPO_REQUEST_TIMEOUT_MS = 10_000;
 
 function getBaseUrl() {
   return getRequiredEnv("DPO_BASE_URL").replace(/\/+$/, "");
@@ -108,7 +110,7 @@ function parseDpoXml<T extends Record<string, string | null>>(
 
 async function dpoRequest(xmlBody: string) {
   const requestStartedAt = performance.now();
-  const response = await fetch(getApiUrl(), {
+  const response = await fetchWithTimeout(getApiUrl(), {
     method: "POST",
     headers: {
       Accept: "application/xml, text/xml;q=0.9, */*;q=0.8",
@@ -116,6 +118,9 @@ async function dpoRequest(xmlBody: string) {
     },
     body: xmlBody,
     cache: "no-store",
+  }, {
+    operationName: "DPO request",
+    timeoutMs: DPO_REQUEST_TIMEOUT_MS,
   });
   const durationMs = Math.round((performance.now() - requestStartedAt) * 100) / 100;
   console.info("dpo_request_timing", {

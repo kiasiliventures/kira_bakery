@@ -64,7 +64,18 @@ async function parseNotificationPayload(request: Request): Promise<PesapalNotifi
 }
 
 async function handleNotification(request: Request) {
-  const rateLimit = await enforceRateLimit(request, "payment-ipn", 180, 60_000);
+  const payload = await parseNotificationPayload(request);
+  const orderId = payload.OrderMerchantReference?.trim();
+  const orderTrackingId = payload.OrderTrackingId?.trim();
+  const rateLimit = await enforceRateLimit(request, "payment-ipn", 180, 60_000, {
+    bucketSuffix: [
+      "provider_ipn",
+      payload.OrderNotificationType?.trim() || "unknown_type",
+      orderTrackingId || "unknown_tracking",
+      orderId || "unknown_order",
+    ].join(":"),
+  });
+
   if (!rateLimit.allowed) {
     logSecurityEvent({
       event: "payment_ipn_rate_limited",
@@ -79,10 +90,6 @@ async function handleNotification(request: Request) {
     });
     return tooManyRequests(rateLimit.retryAfterSeconds);
   }
-
-  const payload = await parseNotificationPayload(request);
-  const orderId = payload.OrderMerchantReference?.trim();
-  const orderTrackingId = payload.OrderTrackingId?.trim();
 
   console.info("pesapal_ipn_received", {
     orderId: orderId ?? null,

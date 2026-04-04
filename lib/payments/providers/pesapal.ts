@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getRequiredEnv, type PaymentProviderName } from "@/lib/payments/config";
+import { fetchWithTimeout } from "@/lib/http/fetch";
 import type {
   PaymentGateway,
   PaymentInitiationInput,
@@ -99,6 +100,7 @@ type TokenCache = {
 };
 
 const provider: PaymentProviderName = "pesapal";
+const PESAPAL_REQUEST_TIMEOUT_MS = 10_000;
 
 let tokenCache: TokenCache | null = null;
 let ipnRegistrationCache: string | null = null;
@@ -386,10 +388,13 @@ async function pesapalRequest<T>(
     headers.set("Authorization", `Bearer ${token}`);
   }
 
-  const response = await fetch(`${getBaseUrl()}${path}`, {
+  const response = await fetchWithTimeout(`${getBaseUrl()}${path}`, {
     ...init,
     headers,
     cache: "no-store",
+  }, {
+    operationName: `Pesapal request (${init.method ?? "GET"} ${path})`,
+    timeoutMs: PESAPAL_REQUEST_TIMEOUT_MS,
   });
   const durationMs = Math.round((performance.now() - requestStartedAt) * 100) / 100;
 
@@ -603,13 +608,16 @@ export async function getPesapalTransactionStatus(orderTrackingId: string) {
 
   const token = await getPesapalAuthToken();
   const requestStartedAt = performance.now();
-  const response = await fetch(baseUrl.toString(), {
+  const response = await fetchWithTimeout(baseUrl.toString(), {
     method: "GET",
     headers: {
       Accept: "application/json",
       Authorization: `Bearer ${token}`,
     },
     cache: "no-store",
+  }, {
+    operationName: "Pesapal status request",
+    timeoutMs: PESAPAL_REQUEST_TIMEOUT_MS,
   });
   const durationMs = Math.round((performance.now() - requestStartedAt) * 100) / 100;
   console.info("pesapal_status_request_timing", {

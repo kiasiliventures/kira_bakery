@@ -13,7 +13,22 @@ function tooManyRequests(retryAfterSeconds: number) {
 }
 
 export async function GET(request: Request) {
-  const rateLimit = await enforceRateLimit(request, "payment-callback", 90, 60_000);
+  const requestUrl = new URL(request.url);
+  const orderId =
+    requestUrl.searchParams.get("orderId")?.trim()
+    || requestUrl.searchParams.get("OrderMerchantReference")?.trim();
+  const orderTrackingId = requestUrl.searchParams.get("OrderTrackingId")?.trim();
+  const cancelled = requestUrl.searchParams.get("cancelled") === "1";
+  const orderAccessLinkToken = requestUrl.searchParams.get("access")?.trim();
+  const rateLimit = await enforceRateLimit(request, "payment-callback", 90, 60_000, {
+    bucketSuffix: [
+      "provider_callback",
+      orderTrackingId || "unknown_tracking",
+      orderId || "unknown_order",
+      cancelled ? "cancelled" : "active",
+    ].join(":"),
+  });
+
   if (!rateLimit.allowed) {
     logSecurityEvent({
       event: "payment_callback_rate_limited",
@@ -28,14 +43,6 @@ export async function GET(request: Request) {
     });
     return tooManyRequests(rateLimit.retryAfterSeconds);
   }
-
-  const requestUrl = new URL(request.url);
-  const orderId =
-    requestUrl.searchParams.get("orderId")?.trim()
-    || requestUrl.searchParams.get("OrderMerchantReference")?.trim();
-  const orderTrackingId = requestUrl.searchParams.get("OrderTrackingId")?.trim();
-  const cancelled = requestUrl.searchParams.get("cancelled") === "1";
-  const orderAccessLinkToken = requestUrl.searchParams.get("access")?.trim();
 
   console.info("pesapal_callback_received", {
     orderId: orderId ?? null,

@@ -1,12 +1,15 @@
 import "server-only";
 
 import { createHash } from "node:crypto";
-import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 type RateLimitResult = {
   allowed: boolean;
   remaining: number;
   retryAfterSeconds: number;
+};
+
+type EnforceRateLimitOptions = {
+  bucketSuffix?: string | null;
 };
 
 type LocalBucket = {
@@ -58,14 +61,27 @@ function getClientIp(request: Request): string {
   return "unknown";
 }
 
-function buildRateLimitKey(request: Request, key: string) {
+function buildRateLimitKey(
+  request: Request,
+  key: string,
+  options?: EnforceRateLimitOptions,
+) {
   const clientIp = getClientIp(request);
   const userAgent = request.headers.get("user-agent")?.trim() || "unknown";
   const fingerprint = createHash("sha256")
     .update(`${clientIp}|${userAgent}`)
     .digest("hex");
 
-  return `${key}:${fingerprint}`;
+  const normalizedBucketSuffix = options?.bucketSuffix?.trim();
+  if (!normalizedBucketSuffix) {
+    return `${key}:${fingerprint}`;
+  }
+
+  const suffixFingerprint = createHash("sha256")
+    .update(`${fingerprint}|${normalizedBucketSuffix}`)
+    .digest("hex");
+
+  return `${key}:${suffixFingerprint}`;
 }
 
 function pruneExpiredLocalBuckets(now: number) {
@@ -156,35 +172,8 @@ export async function enforceRateLimit(
   key: string,
   limit: number,
   windowMs: number,
+  options?: EnforceRateLimitOptions,
 ): Promise<RateLimitResult> {
-  const supabase = getSupabaseServerClient();
-  const bucketKey = buildRateLimitKey(request, key);
-  const { data, error } = await supabase.rpc("consume_rate_limit", {
-    rate_key: bucketKey,
-    max_requests: limit,
-    window_seconds: Math.max(1, Math.ceil(windowMs / 1000)),
-  });
-
-  if (error) {
-    console.error("rate_limit_consume_failed", {
-      key,
-      error: error.message,
-    });
-    return consumeLocalRateLimit(bucketKey, limit, windowMs);
-  }
-
-  const row = Array.isArray(data) ? data[0] : null;
-  if (!row) {
-    console.error("rate_limit_consume_empty_response", { key });
-    return consumeLocalRateLimit(bucketKey, limit, windowMs);
-  }
-
-  return {
-    allowed: Boolean(row.allowed),
-    remaining: typeof row.remaining === "number" ? row.remaining : 0,
-    retryAfterSeconds:
-      typeof row.retry_after_seconds === "number"
-        ? Math.max(1, row.retry_after_seconds)
-        : Math.max(1, Math.ceil(windowMs / 1000)),
-  };
+  const bucketKey = buildRateLimitKey(request, key, options);
+  return consumeLocalRateLimit(bucketKey, limit, windowMs);
 }

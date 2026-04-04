@@ -1,9 +1,8 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { z } from "zod";
 import {
-  toPushTriggerResponseMessage,
-  toPushTriggerResponseStatus,
-  triggerOrderReadyPush,
+  enqueueOrderReadyPush,
+  processOrderReadyPushDispatch,
 } from "@/lib/push/order-ready";
 
 const readyPushTriggerBodySchema = z.object({
@@ -110,28 +109,37 @@ export async function POST(
       );
     }
 
-    const result = await triggerOrderReadyPush({
+    const result = await enqueueOrderReadyPush({
       idempotencyKey,
       orderId,
       orderUpdatedAt: parsedBody.data.orderUpdatedAt,
       source: parsedBody.data.source,
     });
 
+    after(async () => {
+      try {
+        await processOrderReadyPushDispatch(idempotencyKey);
+      } catch (error) {
+        console.error(
+          "order_ready_push_legacy_route_processing_failed",
+          error instanceof Error ? error.message : "unknown_error",
+        );
+      }
+    });
+
     return NextResponse.json({
       ok: true,
+      accepted: true,
       duplicate: result.duplicate,
       orderId: result.orderId,
-      orderUrl: result.orderUrl,
-      subscriptionCount: result.subscriptionCount,
-      successCount: result.successCount,
-      staleSubscriptionCount: result.staleSubscriptionCount,
+      idempotencyKey: result.idempotencyKey,
     });
   } catch (error) {
     return NextResponse.json(
       {
-        message: toPushTriggerResponseMessage(error),
+        message: error instanceof Error ? error.message : "Unable to trigger order ready push notification.",
       },
-      { status: toPushTriggerResponseStatus(error) },
+      { status: 500 },
     );
   }
 }

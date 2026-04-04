@@ -22,6 +22,13 @@ type OrderReadyRow = {
 };
 
 type PushSubscriptionRow = StoredPushSubscription;
+type PushDispatchRow = {
+  idempotency_key: string;
+  order_id: string;
+  order_updated_at: string;
+  source: ReadyTriggerSource;
+  attempt_count: number;
+};
 
 export type OrderReadyPushResult = {
   duplicate: boolean;
@@ -31,6 +38,23 @@ export type OrderReadyPushResult = {
   successCount: number;
   staleSubscriptionCount: number;
 };
+export type EnqueueOrderReadyPushResult = {
+  duplicate: boolean;
+  idempotencyKey: string;
+  orderId: string;
+};
+export type ProcessQueuedOrderReadyPushesResult = {
+  scanned: number;
+  processed: number;
+  completed: number;
+  retried: number;
+  failed: number;
+};
+
+const READY_PUSH_RETRY_BASE_DELAY_MS = 60_000;
+const READY_PUSH_MAX_RETRY_ATTEMPTS = 5;
+const READY_PUSH_MAX_RETRY_DELAY_MS = 30 * 60_000;
+const READY_PUSH_STALE_CLAIM_SECONDS = 5 * 60;
 
 class PushTriggerError extends Error {
   status: number;
@@ -154,12 +178,12 @@ async function deletePushSubscriptions(subscriptionIds: string[]) {
   }
 }
 
-async function claimPushDispatch(input: {
+export async function enqueueOrderReadyPush(input: {
   idempotencyKey: string;
   orderId: string;
   orderUpdatedAt: string;
   source: ReadyTriggerSource;
-}) {
+}): Promise<EnqueueOrderReadyPushResult> {
   const supabase = getSupabaseServerClient();
   const { error } = await supabase
     .from("push_notification_dispatches")
@@ -169,17 +193,45 @@ async function claimPushDispatch(input: {
       order_id: input.orderId,
       order_updated_at: input.orderUpdatedAt,
       source: input.source,
+      next_attempt_at: new Date().toISOString(),
     });
 
   if (!error) {
-    return "claimed" as const;
+    return {
+      duplicate: false,
+      idempotencyKey: input.idempotencyKey,
+      orderId: input.orderId,
+    };
   }
 
   if (error.code === "23505") {
-    return "duplicate" as const;
+    return {
+      duplicate: true,
+      idempotencyKey: input.idempotencyKey,
+      orderId: input.orderId,
+    };
   }
 
-  throw new Error(`Unable to claim push dispatch idempotency key: ${error.message}`);
+  throw new Error(`Unable to enqueue push dispatch: ${error.message}`);
+}
+
+async function claimPushDispatchForProcessing(idempotencyKey: string) {
+  const supabase = getSupabaseServerClient();
+  const { data, error } = await supabase.rpc("claim_push_notification_dispatch", {
+    dispatch_idempotency_key: idempotencyKey,
+    stale_after_seconds: READY_PUSH_STALE_CLAIM_SECONDS,
+  });
+
+  if (error) {
+    throw new Error(`Unable to claim queued push dispatch: ${error.message}`);
+  }
+
+  const row = Array.isArray(data) ? data[0] : null;
+  if (!row) {
+    return null;
+  }
+
+  return row as PushDispatchRow;
 }
 
 async function completePushDispatch(input: {
@@ -196,6 +248,8 @@ async function completePushDispatch(input: {
       subscription_count: input.subscriptionCount,
       success_count: input.successCount,
       stale_subscription_count: input.staleSubscriptionCount,
+      processing_started_at: null,
+      last_error: null,
     })
     .eq("idempotency_key", input.idempotencyKey);
 
@@ -204,17 +258,74 @@ async function completePushDispatch(input: {
   }
 }
 
-async function releasePushDispatch(idempotencyKey: string) {
+function getRetryDelayMs(attemptCount: number) {
+  return Math.min(
+    READY_PUSH_MAX_RETRY_DELAY_MS,
+    READY_PUSH_RETRY_BASE_DELAY_MS * 2 ** Math.max(0, attemptCount - 1),
+  );
+}
+
+function isRetryablePushDispatchError(error: unknown) {
+  return !(error instanceof PushTriggerError);
+}
+
+async function reschedulePushDispatch(input: {
+  idempotencyKey: string;
+  attemptCount: number;
+  errorMessage: string;
+}) {
   const supabase = getSupabaseServerClient();
+  const delayMs = getRetryDelayMs(input.attemptCount);
   const { error } = await supabase
     .from("push_notification_dispatches")
-    .delete()
-    .eq("idempotency_key", idempotencyKey)
+    .update({
+      processing_started_at: null,
+      last_error: input.errorMessage,
+      next_attempt_at: new Date(Date.now() + delayMs).toISOString(),
+    })
+    .eq("idempotency_key", input.idempotencyKey)
     .is("completed_at", null);
 
   if (error) {
-    throw new Error(`Unable to release incomplete push dispatch: ${error.message}`);
+    throw new Error(`Unable to reschedule push dispatch: ${error.message}`);
   }
+}
+
+async function finalizeFailedPushDispatch(input: {
+  idempotencyKey: string;
+  errorMessage: string;
+}) {
+  const supabase = getSupabaseServerClient();
+  const { error } = await supabase
+    .from("push_notification_dispatches")
+    .update({
+      completed_at: new Date().toISOString(),
+      processing_started_at: null,
+      last_error: input.errorMessage,
+    })
+    .eq("idempotency_key", input.idempotencyKey);
+
+  if (error) {
+    throw new Error(`Unable to finalize failed push dispatch: ${error.message}`);
+  }
+}
+
+async function listDuePushDispatchIdempotencyKeys(limit: number) {
+  const supabase = getSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("push_notification_dispatches")
+    .select("idempotency_key")
+    .eq("notification_type", "order_ready")
+    .is("completed_at", null)
+    .lte("next_attempt_at", new Date().toISOString())
+    .order("next_attempt_at", { ascending: true })
+    .limit(limit);
+
+  if (error) {
+    throw new Error(`Unable to list queued push dispatches: ${error.message}`);
+  }
+
+  return ((data ?? []) as Array<{ idempotency_key: string }>).map((row) => row.idempotency_key);
 }
 
 async function resolveSubscriptionsForOrder(order: Pick<OrderReadyRow, "id" | "customer_id">) {
@@ -230,26 +341,16 @@ async function resolveSubscriptionsForOrder(order: Pick<OrderReadyRow, "id" | "c
   ]);
 }
 
-export async function triggerOrderReadyPush(input: {
-  idempotencyKey: string;
-  orderId: string;
-  orderUpdatedAt: string;
-  source: ReadyTriggerSource;
-}): Promise<OrderReadyPushResult> {
-  const claimResult = await claimPushDispatch(input);
-  if (claimResult === "duplicate") {
-    return {
-      duplicate: true,
-      orderId: input.orderId,
-      orderUrl: buildOrderPath(input.orderId),
-      subscriptionCount: 0,
-      successCount: 0,
-      staleSubscriptionCount: 0,
-    };
+export async function processOrderReadyPushDispatch(
+  idempotencyKey: string,
+): Promise<OrderReadyPushResult | null> {
+  const dispatch = await claimPushDispatchForProcessing(idempotencyKey);
+  if (!dispatch) {
+    return null;
   }
 
   try {
-    const order = await getOrderForReadyPush(input.orderId);
+    const order = await getOrderForReadyPush(dispatch.order_id);
     if (!order) {
       throw new PushTriggerError(404, "Order not found.");
     }
@@ -258,7 +359,7 @@ export async function triggerOrderReadyPush(input: {
       throw new PushTriggerError(409, "Order is not in Ready status.");
     }
 
-    if (order.updated_at !== input.orderUpdatedAt) {
+    if (order.updated_at !== dispatch.order_updated_at) {
       throw new PushTriggerError(409, "Order updated_at does not match the Ready transition.");
     }
 
@@ -314,7 +415,7 @@ export async function triggerOrderReadyPush(input: {
 
     await deletePushSubscriptions(staleSubscriptionIds);
     await completePushDispatch({
-      idempotencyKey: input.idempotencyKey,
+      idempotencyKey: dispatch.idempotency_key,
       subscriptionCount: subscriptions.length,
       successCount,
       staleSubscriptionCount: staleSubscriptionIds.length,
@@ -329,9 +430,61 @@ export async function triggerOrderReadyPush(input: {
       staleSubscriptionCount: staleSubscriptionIds.length,
     };
   } catch (error) {
-    await releasePushDispatch(input.idempotencyKey);
+    const errorMessage = error instanceof Error ? error.message : "unknown_error";
+    if (
+      isRetryablePushDispatchError(error)
+      && dispatch.attempt_count < READY_PUSH_MAX_RETRY_ATTEMPTS
+    ) {
+      await reschedulePushDispatch({
+        idempotencyKey: dispatch.idempotency_key,
+        attemptCount: dispatch.attempt_count,
+        errorMessage,
+      });
+    } else {
+      await finalizeFailedPushDispatch({
+        idempotencyKey: dispatch.idempotency_key,
+        errorMessage,
+      });
+    }
     throw error;
   }
+}
+
+export async function processDueOrderReadyPushes(
+  limit = 20,
+): Promise<ProcessQueuedOrderReadyPushesResult> {
+  const idempotencyKeys = await listDuePushDispatchIdempotencyKeys(limit);
+  let processed = 0;
+  let completed = 0;
+  let retried = 0;
+  let failed = 0;
+
+  for (const idempotencyKey of idempotencyKeys) {
+    try {
+      const result = await processOrderReadyPushDispatch(idempotencyKey);
+      if (!result) {
+        continue;
+      }
+
+      processed += 1;
+      completed += 1;
+    } catch (error) {
+      processed += 1;
+      if (isRetryablePushDispatchError(error)) {
+        retried += 1;
+      } else {
+        failed += 1;
+      }
+    }
+  }
+
+  return {
+    scanned: idempotencyKeys.length,
+    processed,
+    completed,
+    retried,
+    failed,
+  };
 }
 
 export function toPushTriggerResponseStatus(error: unknown) {

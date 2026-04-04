@@ -1,10 +1,6 @@
 {
   "crons": [
     {
-      "path": "/api/internal/push/order-ready/process",
-      "schedule": "*/2 * * * *"
-    },
-    {
       "path": "/api/internal/storage/cake-reference-images/cleanup",
       "schedule": "0 3 * * 0"
     }

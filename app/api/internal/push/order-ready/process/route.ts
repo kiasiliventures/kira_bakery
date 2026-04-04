@@ -1,34 +1,22 @@
 import { NextResponse, after } from "next/server";
 import { z } from "zod";
 import {
+  extractBearerToken,
+  InternalRequestAuthError,
+  requireInternalRequestSigningSecret,
+  verifyInternalRequestToken,
+} from "@/lib/internal-auth";
+import {
   processDueOrderReadyPushes,
   processOrderReadyPushDispatch,
 } from "@/lib/push/order-ready";
 
 export const runtime = "nodejs";
+const READY_PROCESS_PURPOSE = "storefront_order_ready_process";
 
 const kickoffBodySchema = z.object({
   idempotencyKey: z.string().min(1).max(200),
 });
-
-function getBearerToken(request: Request) {
-  const authorization = request.headers.get("authorization")?.trim();
-  if (!authorization?.startsWith("Bearer ")) {
-    return null;
-  }
-
-  const token = authorization.slice("Bearer ".length).trim();
-  return token || null;
-}
-
-function requireInternalAuthToken() {
-  const token = process.env.STOREFRONT_INTERNAL_AUTH_TOKEN?.trim();
-  if (!token) {
-    throw new Error("Missing required environment variable: STOREFRONT_INTERNAL_AUTH_TOKEN");
-  }
-
-  return token;
-}
 
 function getCronSecret() {
   const value = process.env.CRON_SECRET?.trim();
@@ -42,16 +30,8 @@ function isCronAuthorized(request: Request) {
   return getBearerToken(request) === getCronSecret();
 }
 
-function isInternalAuthorized(request: Request) {
-  return getBearerToken(request) === requireInternalAuthToken();
-}
-
 export async function POST(request: Request) {
   try {
-    if (!isInternalAuthorized(request)) {
-      return NextResponse.json({ message: "Unauthorized." }, { status: 401 });
-    }
-
     const body = await request.json().catch(() => null);
     const parsed = kickoffBodySchema.safeParse(body);
     if (!parsed.success) {
@@ -63,6 +43,22 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
+
+    const providedToken = extractBearerToken(request);
+    if (!providedToken) {
+      return NextResponse.json({ message: "Unauthorized." }, { status: 401 });
+    }
+
+    verifyInternalRequestToken({
+      token: providedToken,
+      secret: requireInternalRequestSigningSecret("STOREFRONT_INTERNAL_AUTH_TOKEN"),
+      issuer: "kira-bakery-admin",
+      audience: "kira-bakery-storefront",
+      purpose: READY_PROCESS_PURPOSE,
+      method: "POST",
+      path: new URL(request.url).pathname,
+      idempotencyKey: parsed.data.idempotencyKey,
+    });
 
     after(async () => {
       try {
@@ -80,6 +76,10 @@ export async function POST(request: Request) {
       idempotencyKey: parsed.data.idempotencyKey,
     }, { status: 202 });
   } catch (error) {
+    if (error instanceof InternalRequestAuthError) {
+      return NextResponse.json({ message: error.message }, { status: 401 });
+    }
+
     return NextResponse.json(
       {
         message: error instanceof Error ? error.message : "Unable to schedule push processing.",

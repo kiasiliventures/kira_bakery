@@ -1,34 +1,22 @@
 import { NextResponse, after } from "next/server";
 import { z } from "zod";
 import {
+  extractBearerToken,
+  InternalRequestAuthError,
+  requireInternalRequestSigningSecret,
+  verifyInternalRequestToken,
+} from "@/lib/internal-auth";
+import {
   enqueueOrderReadyPush,
   processOrderReadyPushDispatch,
 } from "@/lib/push/order-ready";
 
+const READY_TRIGGER_PURPOSE = "storefront_order_ready_trigger";
 const readyPushTriggerBodySchema = z.object({
   source: z.literal("admin_order_status_patch"),
   orderStatus: z.literal("Ready"),
   orderUpdatedAt: z.string().datetime({ offset: true, message: "Invalid orderUpdatedAt timestamp." }),
 });
-
-function getBearerToken(request: Request) {
-  const authorization = request.headers.get("authorization")?.trim();
-  if (!authorization?.startsWith("Bearer ")) {
-    return null;
-  }
-
-  const token = authorization.slice("Bearer ".length).trim();
-  return token || null;
-}
-
-function requireInternalAuthToken() {
-  const token = process.env.STOREFRONT_INTERNAL_AUTH_TOKEN?.trim();
-  if (!token) {
-    throw new Error("Missing required environment variable: STOREFRONT_INTERNAL_AUTH_TOKEN");
-  }
-
-  return token;
-}
 
 function getIdempotencyKey(request: Request) {
   const key = request.headers.get("Idempotency-Key")?.trim();
@@ -71,13 +59,6 @@ export async function POST(
   context: { params: Promise<{ id: string }> },
 ) {
   try {
-    const expectedToken = requireInternalAuthToken();
-    const providedToken = getBearerToken(request);
-
-    if (!providedToken || providedToken !== expectedToken) {
-      return NextResponse.json({ message: "Unauthorized." }, { status: 401 });
-    }
-
     const idempotencyKey = getIdempotencyKey(request);
     if (!idempotencyKey) {
       return NextResponse.json({ message: "Missing Idempotency-Key header." }, { status: 400 });
@@ -98,6 +79,11 @@ export async function POST(
       return NextResponse.json({ message: "Missing order id." }, { status: 400 });
     }
 
+    const providedToken = extractBearerToken(request);
+    if (!providedToken) {
+      return NextResponse.json({ message: "Unauthorized." }, { status: 401 });
+    }
+
     const expectedIdempotencyKey = buildExpectedIdempotencyKey(
       orderId,
       parsedBody.data.orderUpdatedAt,
@@ -108,6 +94,18 @@ export async function POST(
         { status: 400 },
       );
     }
+
+    verifyInternalRequestToken({
+      token: providedToken,
+      secret: requireInternalRequestSigningSecret("STOREFRONT_INTERNAL_AUTH_TOKEN"),
+      issuer: "kira-bakery-admin",
+      audience: "kira-bakery-storefront",
+      purpose: READY_TRIGGER_PURPOSE,
+      method: "POST",
+      path: new URL(request.url).pathname,
+      orderId,
+      idempotencyKey,
+    });
 
     const result = await enqueueOrderReadyPush({
       idempotencyKey,
@@ -135,6 +133,10 @@ export async function POST(
       idempotencyKey: result.idempotencyKey,
     });
   } catch (error) {
+    if (error instanceof InternalRequestAuthError) {
+      return NextResponse.json({ message: error.message }, { status: 401 });
+    }
+
     return NextResponse.json(
       {
         message: error instanceof Error ? error.message : "Unable to trigger order ready push notification.",

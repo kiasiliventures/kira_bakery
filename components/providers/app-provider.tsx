@@ -73,6 +73,7 @@ type CartContextValue = {
   updateQuantity: (lineKey: string, quantity: number) => void;
   itemCount: number;
   subtotalUGX: number;
+  lastItemAddedAt: number;
 };
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
@@ -91,6 +92,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [items, setItems] = useState<CartItem[]>(() =>
     readLocalStorage<CartItem[]>(STORAGE_KEYS.cart, []),
   );
+  const [lastItemAddedAt, setLastItemAddedAt] = useState(0);
 
   useEffect(() => {
     writeLocalStorage(STORAGE_KEYS.cart, items);
@@ -143,6 +145,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const cartValue = useMemo<CartContextValue>(() => {
     const addItem = (item: AddCartInput) => {
+      setLastItemAddedAt(Date.now());
       setItems((prev) => {
         const key = getCartLineKey(item);
         const existingIndex = prev.findIndex(
@@ -209,8 +212,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       updateQuantity,
       itemCount,
       subtotalUGX,
+      lastItemAddedAt,
     };
-  }, [items]);
+  }, [items, lastItemAddedAt]);
 
   return (
     <ThemeContext.Provider value={themeValue}>

@@ -136,7 +136,9 @@ export function SiteHeader() {
           <div className="flex items-center gap-2">
             <AccountMenu />
             <ThemeToggle />
-            <CartLink />
+            <div className="hidden md:block">
+              <CartLink />
+            </div>
           </div>
         </div>
       </header>

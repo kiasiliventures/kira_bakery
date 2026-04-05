@@ -136,6 +136,26 @@ function buildSupabaseHarness(
 
       return false;
     });
+  const matchesNotFilter = (
+    row: MockOrderRow,
+    field: string,
+    operator: string,
+    value: unknown,
+  ) => {
+    const actual = getFieldValue(row, field);
+
+    if (operator === "in" && typeof value === "string") {
+      const normalizedValues = value
+        .replace(/^\(/, "")
+        .replace(/\)$/, "")
+        .split(",")
+        .map((entry) => entry.trim());
+
+      return !normalizedValues.includes(String(actual ?? ""));
+    }
+
+    return true;
+  };
   const updateSpy = vi.fn();
   const upsertSpy = vi.fn(async () => ({ error: null }));
   const rpcSpy = vi.fn(async (name: string, args: Record<string, unknown>) => {
@@ -168,6 +188,7 @@ function buildSupabaseHarness(
             const isFilters = new Map<string, unknown>();
             const inFilters = new Map<string, unknown[]>();
             const orFilters: string[] = [];
+            const notFilters: Array<{ field: string; operator: string; value: unknown }> = [];
 
             const query = {
               eq(field: string, value: unknown) {
@@ -186,6 +207,10 @@ function buildSupabaseHarness(
                 orFilters.push(filter);
                 return query;
               },
+              not(field: string, operator: string, value: unknown) {
+                notFilters.push({ field, operator, value });
+                return query;
+              },
               select() {
                 return {
                   maybeSingle: async () => {
@@ -201,8 +226,11 @@ function buildSupabaseHarness(
                     const matchesOr = orFilters.every((filter) =>
                       matchesOrFilter(state.orderRow, filter),
                     );
+                    const matchesNot = notFilters.every((filter) =>
+                      matchesNotFilter(state.orderRow, filter.field, filter.operator, filter.value),
+                    );
 
-                    if (!(matchesEq && matchesIs && matchesIn && matchesOr)) {
+                    if (!(matchesEq && matchesIs && matchesIn && matchesOr && matchesNot)) {
                       return {
                         data: null,
                         error: null,

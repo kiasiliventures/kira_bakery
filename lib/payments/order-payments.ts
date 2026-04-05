@@ -233,6 +233,12 @@ const PENDING_OR_UNPAID_PAYMENT_FILTER = [
   "payment_status.eq.unpaid",
   "payment_status.eq.pending",
 ].join(",");
+const PENDING_ORDER_LIFECYCLE_FILTER = [
+  "status.eq.Pending Payment",
+  "status.eq.Pending",
+  "order_status.eq.pending_payment",
+  "order_status.eq.pending",
+].join(",");
 
 class OrderAccessDeniedError extends Error {
   constructor() {
@@ -1312,7 +1318,7 @@ export async function cancelRejectedOrderPaymentInitiation(input: {
     .eq("id", input.orderId)
     .is("order_tracking_id", null)
     .is("payment_redirect_url", null)
-    .in("status", ["Pending Payment"])
+    .or(PENDING_ORDER_LIFECYCLE_FILTER)
     .or(`payment_provider.is.null,payment_provider.eq.${input.provider}`)
     .or(PENDING_OR_UNPAID_PAYMENT_FILTER)
     .select(ORDER_PAYMENT_SELECTION)

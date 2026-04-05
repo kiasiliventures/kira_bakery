@@ -340,6 +340,43 @@ describe("payment sync regression tests", () => {
     );
   });
 
+  it("cancels a rejected guest-checkout initiation when the raw legacy status is still Pending", async () => {
+    const orderRow = createOrderRow({
+      status: "Pending",
+      order_status: "pending",
+      payment_provider: "pesapal",
+      payment_status: "unpaid",
+      payment_redirect_url: null,
+      order_tracking_id: null,
+    });
+    const supabase = buildSupabaseHarness(orderRow);
+
+    getSupabaseServerClientMock.mockReturnValue(supabase.client);
+
+    const { cancelRejectedOrderPaymentInitiation } = await import("@/lib/payments/order-payments");
+    const result = await cancelRejectedOrderPaymentInitiation({
+      orderId: orderRow.id,
+      provider: "pesapal",
+      reasonCode: "maximum_amount_limit_exceeded",
+      reasonMessage: "Request Declined.Maximum allowed test transactions limit exceeded",
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        orderId: orderRow.id,
+        paymentStatus: "cancelled",
+        viewState: "cancelled",
+      }),
+    );
+    expect(supabase.getOrderRow()).toEqual(
+      expect.objectContaining({
+        status: "Cancelled",
+        order_status: "cancelled",
+        payment_status: "cancelled",
+      }),
+    );
+  });
+
   it("keeps an order paid and flags it for review when stock deduction loses the race", async () => {
     const orderRow = createOrderRow({
       order_items: [

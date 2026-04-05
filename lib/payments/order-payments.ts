@@ -36,6 +36,7 @@ type OrderPaymentRow = {
   payment_initiation_failure_message: string | null;
   payment_initiation_failed_at: string | null;
   payment_initiation_attempted_at: string | null;
+  payment_last_verified_at: string | null;
   paid_at: string | null;
   order_tracking_id: string | null;
   fulfillment_review_required: boolean | null;
@@ -203,6 +204,7 @@ const ORDER_PAYMENT_SELECTION = [
   "payment_initiation_failure_message",
   "payment_initiation_failed_at",
   "payment_initiation_attempted_at",
+  "payment_last_verified_at",
   "paid_at",
   "order_tracking_id",
   "fulfillment_review_required",
@@ -726,6 +728,7 @@ async function persistVerifiedPaymentResult(input: {
     payment_reference: input.verified.paymentReference ?? input.row.payment_reference,
     paid_at: nextPaidAt,
     order_tracking_id: input.verified.providerReference,
+    payment_last_verified_at: input.verified.verifiedAt,
   };
   const wasAlreadyPaid = normalizeStoredPaymentStatus(input.row.payment_status) === "paid";
   const isNowPaid = input.nextPaymentStatus === "paid";
@@ -1112,6 +1115,10 @@ export async function verifyOrderPaymentAuthority(
       },
       createdAt: row.created_at,
       verifiedAt: row.paid_at ?? status.verifiedAt,
+    });
+
+    await updateOrderPaymentRow(row.id, {
+      payment_last_verified_at: status.verifiedAt,
     });
 
     return buildAuthorityResult({

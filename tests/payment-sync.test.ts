@@ -319,7 +319,12 @@ describe("payment sync regression tests", () => {
     ).rejects.toThrow("Payment amount verification failed. Order held for review.");
 
     expect(supabase.upsertSpy).toHaveBeenCalledTimes(1);
-    expect(supabase.updateSpy).not.toHaveBeenCalled();
+    expect(supabase.updateSpy).toHaveBeenCalledTimes(1);
+    expect(supabase.updateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payment_last_verified_at: expect.any(String),
+      }),
+    );
     expect(supabase.rpcSpy).not.toHaveBeenCalled();
     expect(logSecurityEventMock).toHaveBeenCalledWith(
       expect.objectContaining({

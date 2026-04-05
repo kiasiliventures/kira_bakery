@@ -233,12 +233,6 @@ const PENDING_OR_UNPAID_PAYMENT_FILTER = [
   "payment_status.eq.unpaid",
   "payment_status.eq.pending",
 ].join(",");
-const PENDING_ORDER_LIFECYCLE_FILTER = [
-  "status.eq.Pending Payment",
-  "status.eq.Pending",
-  "order_status.eq.pending_payment",
-  "order_status.eq.pending",
-].join(",");
 
 class OrderAccessDeniedError extends Error {
   constructor() {
@@ -1299,6 +1293,16 @@ export async function cancelRejectedOrderPaymentInitiation(input: {
     || row.order_tracking_id
     || row.payment_redirect_url
   ) {
+    console.warn("order_payment_initiation_rejection_cancel_guard_blocked", {
+      orderId: input.orderId,
+      provider: input.provider,
+      storedPaymentStatus,
+      paymentProvider: row.payment_provider,
+      status: row.status,
+      orderStatus: row.order_status,
+      hasTrackingId: Boolean(row.order_tracking_id),
+      hasRedirectUrl: Boolean(row.payment_redirect_url),
+    });
     return null;
   }
 
@@ -1318,8 +1322,6 @@ export async function cancelRejectedOrderPaymentInitiation(input: {
     .eq("id", input.orderId)
     .is("order_tracking_id", null)
     .is("payment_redirect_url", null)
-    .or(PENDING_ORDER_LIFECYCLE_FILTER)
-    .or(`payment_provider.is.null,payment_provider.eq.${input.provider}`)
     .or(PENDING_OR_UNPAID_PAYMENT_FILTER)
     .select(ORDER_PAYMENT_SELECTION)
     .maybeSingle();
@@ -1340,6 +1342,16 @@ export async function cancelRejectedOrderPaymentInitiation(input: {
   }
 
   if (normalizeStoredPaymentStatus(updatedRow.payment_status) !== "cancelled") {
+    console.warn("order_payment_initiation_rejection_cancel_noop", {
+      orderId: input.orderId,
+      provider: input.provider,
+      status: updatedRow.status,
+      orderStatus: updatedRow.order_status,
+      paymentStatus: updatedRow.payment_status,
+      paymentProvider: updatedRow.payment_provider,
+      hasTrackingId: Boolean(updatedRow.order_tracking_id),
+      hasRedirectUrl: Boolean(updatedRow.payment_redirect_url),
+    });
     return null;
   }
 

@@ -39,6 +39,9 @@ type MockOrderRow = {
   payment_provider: string | null;
   payment_reference: string | null;
   payment_redirect_url: string | null;
+  payment_initiation_failure_code: string | null;
+  payment_initiation_failure_message: string | null;
+  payment_initiation_failed_at: string | null;
   paid_at: string | null;
   order_tracking_id: string | null;
   fulfillment_review_required: boolean | null;
@@ -82,6 +85,9 @@ function createOrderRow(overrides: Partial<MockOrderRow> = {}): MockOrderRow {
     payment_provider: "pesapal",
     payment_reference: null,
     payment_redirect_url: "https://payments.example.com",
+    payment_initiation_failure_code: null,
+    payment_initiation_failure_message: null,
+    payment_initiation_failed_at: null,
     paid_at: null,
     order_tracking_id: "tracking-123",
     fulfillment_review_required: false,
@@ -112,6 +118,24 @@ function buildSupabaseHarness(
   const state = {
     orderRow: cloneOrderRow(initialOrderRow),
   };
+  const getFieldValue = (row: MockOrderRow, field: string) =>
+    row[field as keyof MockOrderRow];
+  const matchesOrFilter = (row: MockOrderRow, filter: string) =>
+    filter.split(",").some((entry) => {
+      const [field, operator, ...valueParts] = entry.split(".");
+      const expected = valueParts.join(".");
+      const actual = getFieldValue(row, field);
+
+      if (operator === "is" && expected === "null") {
+        return actual == null;
+      }
+
+      if (operator === "eq") {
+        return String(actual ?? "") === expected;
+      }
+
+      return false;
+    });
   const updateSpy = vi.fn();
   const upsertSpy = vi.fn(async () => ({ error: null }));
   const rpcSpy = vi.fn(async (name: string, args: Record<string, unknown>) => {
@@ -140,17 +164,51 @@ function buildSupabaseHarness(
           },
           update(values: Partial<MockOrderRow>) {
             updateSpy(values);
+            const eqFilters = new Map<string, unknown>();
+            const isFilters = new Map<string, unknown>();
+            const inFilters = new Map<string, unknown[]>();
+            const orFilters: string[] = [];
 
             const query = {
-              eq() {
+              eq(field: string, value: unknown) {
+                eqFilters.set(field, value);
                 return query;
               },
-              or() {
+              is(field: string, value: unknown) {
+                isFilters.set(field, value);
+                return query;
+              },
+              in(field: string, values: unknown[]) {
+                inFilters.set(field, values);
+                return query;
+              },
+              or(filter: string) {
+                orFilters.push(filter);
                 return query;
               },
               select() {
                 return {
                   maybeSingle: async () => {
+                    const matchesEq = [...eqFilters.entries()].every(([field, value]) =>
+                      getFieldValue(state.orderRow, field) === value,
+                    );
+                    const matchesIs = [...isFilters.entries()].every(([field, value]) =>
+                      getFieldValue(state.orderRow, field) === value,
+                    );
+                    const matchesIn = [...inFilters.entries()].every(([field, values]) =>
+                      values.includes(getFieldValue(state.orderRow, field)),
+                    );
+                    const matchesOr = orFilters.every((filter) =>
+                      matchesOrFilter(state.orderRow, filter),
+                    );
+
+                    if (!(matchesEq && matchesIs && matchesIn && matchesOr)) {
+                      return {
+                        data: null,
+                        error: null,
+                      };
+                    }
+
                     state.orderRow = {
                       ...state.orderRow,
                       ...values,
@@ -239,6 +297,45 @@ describe("payment sync regression tests", () => {
       expect.objectContaining({
         event: "payment_amount_mismatch",
         severity: "error",
+      }),
+    );
+  });
+
+  it("cancels a rejected initiation even when the order has not stored a provider yet", async () => {
+    const orderRow = createOrderRow({
+      payment_provider: null,
+      payment_status: "unpaid",
+      payment_redirect_url: null,
+      order_tracking_id: null,
+    });
+    const supabase = buildSupabaseHarness(orderRow);
+
+    getSupabaseServerClientMock.mockReturnValue(supabase.client);
+
+    const { cancelRejectedOrderPaymentInitiation } = await import("@/lib/payments/order-payments");
+    const result = await cancelRejectedOrderPaymentInitiation({
+      orderId: orderRow.id,
+      provider: "pesapal",
+      reasonCode: "maximum_amount_limit_exceeded",
+      reasonMessage: "Request Declined.Maximum allowed test transactions limit exceeded",
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        orderId: orderRow.id,
+        paymentStatus: "cancelled",
+        viewState: "cancelled",
+      }),
+    );
+    expect(supabase.getOrderRow()).toEqual(
+      expect.objectContaining({
+        status: "Cancelled",
+        order_status: "cancelled",
+        payment_status: "cancelled",
+        payment_provider: "pesapal",
+        payment_initiation_failure_code: "maximum_amount_limit_exceeded",
+        payment_initiation_failure_message:
+          "Request Declined.Maximum allowed test transactions limit exceeded",
       }),
     );
   });

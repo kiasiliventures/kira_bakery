@@ -940,6 +940,14 @@ export async function POST(request: Request) {
       && !paymentError.providerReference
       && !paymentError.redirectUrl
     ) {
+      console.info("checkout_payment_initiation_rejected", {
+        orderId,
+        provider: paymentError.provider,
+        reasonCode: paymentError.code,
+        providerStatus: paymentError.providerStatus,
+        hasProviderReference: Boolean(paymentError.providerReference),
+        hasRedirectUrl: Boolean(paymentError.redirectUrl),
+      });
       const cancelledSnapshot = await cancelRejectedOrderPaymentInitiation({
         orderId,
         provider: paymentError.provider,
@@ -968,6 +976,12 @@ export async function POST(request: Request) {
         });
         return response;
       }
+
+      console.warn("checkout_payment_initiation_rejection_not_cancelled", {
+        orderId,
+        provider: paymentError.provider,
+        reasonCode: paymentError.code,
+      });
     }
 
     console.error("checkout_payment_initiation_failed", {

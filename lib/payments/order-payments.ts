@@ -1304,15 +1304,16 @@ export async function cancelRejectedOrderPaymentInitiation(input: {
       status: "Cancelled",
       order_status: "cancelled",
       payment_status: "cancelled",
+      payment_provider: input.provider,
       payment_initiation_failure_code: input.reasonCode?.trim() || null,
       payment_initiation_failure_message: input.reasonMessage.trim(),
       payment_initiation_failed_at: rejectedAt,
     })
     .eq("id", input.orderId)
-    .eq("payment_provider", input.provider)
     .is("order_tracking_id", null)
     .is("payment_redirect_url", null)
     .in("status", ["Pending Payment"])
+    .or(`payment_provider.is.null,payment_provider.eq.${input.provider}`)
     .or(PENDING_OR_UNPAID_PAYMENT_FILTER)
     .select(ORDER_PAYMENT_SELECTION)
     .maybeSingle();

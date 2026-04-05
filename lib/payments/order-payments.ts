@@ -35,6 +35,7 @@ type OrderPaymentRow = {
   payment_initiation_failure_code: string | null;
   payment_initiation_failure_message: string | null;
   payment_initiation_failed_at: string | null;
+  payment_initiation_attempted_at: string | null;
   paid_at: string | null;
   order_tracking_id: string | null;
   fulfillment_review_required: boolean | null;
@@ -179,6 +180,8 @@ export type OrderPaymentAuthorityResult = {
 };
 
 const PAYMENT_STATUS_REFRESH_REVALIDATE_SECONDS = 15;
+export const PAYMENT_INITIATION_PENDING_VERIFICATION_ERROR =
+  "Order payment initiation is pending verification.";
 const ORDER_PAYMENT_SELECTION = [
   "id",
   "customer_id",
@@ -199,6 +202,7 @@ const ORDER_PAYMENT_SELECTION = [
   "payment_initiation_failure_code",
   "payment_initiation_failure_message",
   "payment_initiation_failed_at",
+  "payment_initiation_attempted_at",
   "paid_at",
   "order_tracking_id",
   "fulfillment_review_required",
@@ -340,6 +344,34 @@ async function updateOrderPaymentRow(
   if (error) {
     console.error("order_payment_update_failed", { orderId, error: error.message });
     throw new Error("Unable to update order payment details.");
+  }
+
+  return (data as OrderPaymentRow | null) ?? null;
+}
+
+async function claimOrderPaymentInitiation(
+  orderId: string,
+): Promise<OrderPaymentRow | null> {
+  const supabase = getSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("orders")
+    .update({
+      payment_initiation_attempted_at: new Date().toISOString(),
+    })
+    .eq("id", orderId)
+    .is("order_tracking_id", null)
+    .is("payment_redirect_url", null)
+    .is("payment_initiation_attempted_at", null)
+    .not("payment_status", "in", "(paid,completed,cancelled,canceled,invalid)")
+    .select(ORDER_PAYMENT_SELECTION)
+    .maybeSingle();
+
+  if (error) {
+    console.error("order_payment_initiation_claim_failed", {
+      orderId,
+      error: error.message,
+    });
+    throw new Error("Unable to claim order payment initiation.");
   }
 
   return (data as OrderPaymentRow | null) ?? null;
@@ -836,6 +868,53 @@ export async function initiateOrderPaymentForOrder(
     };
   }
 
+  if (row.payment_initiation_attempted_at) {
+    throw new Error(PAYMENT_INITIATION_PENDING_VERIFICATION_ERROR);
+  }
+
+  const claimedRow = await claimOrderPaymentInitiation(orderId);
+  if (!claimedRow) {
+    const latestRow = await getOrderPaymentRow(orderId);
+    if (!latestRow) {
+      throw new Error("Order not found.");
+    }
+
+    const latestPaymentStatus = normalizeStoredPaymentStatus(latestRow.payment_status);
+    if (latestPaymentStatus === "paid") {
+      throw new Error("Order has already been paid.");
+    }
+
+    if (latestPaymentStatus === "cancelled") {
+      throw new Error("Order payment has been cancelled.");
+    }
+
+    if (latestRow.order_tracking_id && latestRow.payment_redirect_url) {
+      await upsertPaymentAttempt({
+        orderId: latestRow.id,
+        provider: providerName,
+        providerReference: latestRow.order_tracking_id,
+        amount: latestRow.total_ugx,
+        currency: "UGX",
+        status: latestPaymentStatus,
+        redirectUrl: latestRow.payment_redirect_url,
+        rawProviderResponse: {
+          reusedExistingAttemptAfterClaimMiss: true,
+          paymentReference: latestRow.payment_reference,
+        },
+        createdAt: latestRow.created_at,
+        verifiedAt: latestRow.paid_at,
+      });
+
+      return {
+        orderId,
+        redirectUrl: latestRow.payment_redirect_url,
+        paymentStatus: latestPaymentStatus,
+      };
+    }
+
+    throw new Error(PAYMENT_INITIATION_PENDING_VERIFICATION_ERROR);
+  }
+
   const providerInitiationStartedAt = performance.now();
   const response = await gateway.initiatePayment({
     orderId: row.id,
@@ -868,6 +947,7 @@ export async function initiateOrderPaymentForOrder(
     payment_initiation_failure_code: null,
     payment_initiation_failure_message: null,
     payment_initiation_failed_at: null,
+    payment_initiation_attempted_at: claimedRow.payment_initiation_attempted_at,
   });
 
   await upsertPaymentAttempt({

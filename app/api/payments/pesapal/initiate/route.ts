@@ -5,6 +5,7 @@ import { logSecurityEvent } from "@/lib/observability/security-events";
 import {
   initiateOrderPaymentForOrder,
   isOrderAccessDeniedError,
+  PAYMENT_INITIATION_PENDING_VERIFICATION_ERROR,
 } from "@/lib/payments/order-payments";
 import { enforceRateLimit } from "@/lib/rate-limit";
 
@@ -90,6 +91,10 @@ export async function POST(request: Request) {
     }
 
     if (error instanceof Error && error.message === "Order payment has been cancelled.") {
+      return NextResponse.json({ message: error.message }, { status: 409 });
+    }
+
+    if (error instanceof Error && error.message === PAYMENT_INITIATION_PENDING_VERIFICATION_ERROR) {
       return NextResponse.json({ message: error.message }, { status: 409 });
     }
 

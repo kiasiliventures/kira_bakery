@@ -26,6 +26,8 @@ vi.mock("@/lib/payments/order-payments", () => ({
   getOrderAccessToken: getOrderAccessTokenMock,
   initiateOrderPaymentForOrder: initiateOrderPaymentForOrderMock,
   isOrderAccessDeniedError: vi.fn(() => false),
+  PAYMENT_INITIATION_PENDING_VERIFICATION_ERROR:
+    "Order payment initiation is pending verification.",
 }));
 
 describe("payment route regression tests", () => {

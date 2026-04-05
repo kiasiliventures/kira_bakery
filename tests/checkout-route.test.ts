@@ -33,6 +33,8 @@ vi.mock("@/lib/payments/order-payments", () => ({
   getOrderAccessToken: getOrderAccessTokenMock,
   getOrderPaymentSnapshot: getOrderPaymentSnapshotMock,
   initiateOrderPaymentForOrder: initiateOrderPaymentForOrderMock,
+  PAYMENT_INITIATION_PENDING_VERIFICATION_ERROR:
+    "Order payment initiation is pending verification.",
 }));
 
 vi.mock("@/lib/payments/order-access-cookie", () => ({

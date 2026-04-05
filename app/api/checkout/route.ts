@@ -11,6 +11,7 @@ import {
   getOrderAccessToken,
   getOrderPaymentSnapshot,
   initiateOrderPaymentForOrder,
+  PAYMENT_INITIATION_PENDING_VERIFICATION_ERROR,
 } from "@/lib/payments/order-payments";
 import { isPesapalInitiationRejectedError } from "@/lib/payments/providers/pesapal";
 import { enforceRateLimit } from "@/lib/rate-limit";
@@ -643,6 +644,12 @@ async function resumeCheckoutAttempt(
       return response;
     }
 
+    if (error instanceof Error && error.message === PAYMENT_INITIATION_PENDING_VERIFICATION_ERROR) {
+      return conflict(
+        "Payment initiation is already in progress for this order. Please wait before retrying.",
+      );
+    }
+
     console.error("checkout_payment_resume_failed", {
       orderId: row.resource_id,
       error: error instanceof Error ? error.message : "unknown error",
@@ -982,6 +989,24 @@ export async function POST(request: Request) {
         provider: paymentError.provider,
         reasonCode: paymentError.code,
       });
+    }
+
+    if (
+      paymentError instanceof Error
+      && paymentError.message === PAYMENT_INITIATION_PENDING_VERIFICATION_ERROR
+    ) {
+      const response = conflict(
+        "Payment initiation is already in progress for this order. Please wait before retrying.",
+      );
+      recordTiming(timings, "checkout_total", checkoutStartedAt);
+      setServerTimingHeaders(response, timings);
+      console.info("checkout_timing", {
+        orderId,
+        idempotencyKey,
+        timings,
+        outcome: "payment_initiation_pending_verification",
+      });
+      return response;
     }
 
     console.error("checkout_payment_initiation_failed", {

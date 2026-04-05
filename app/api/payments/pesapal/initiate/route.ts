@@ -89,6 +89,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ message: error.message }, { status: 403 });
     }
 
+    if (error instanceof Error && error.message === "Order payment has been cancelled.") {
+      return NextResponse.json({ message: error.message }, { status: 409 });
+    }
+
     return NextResponse.json(
       { message: error instanceof Error ? error.message : "Unable to initiate payment." },
       { status: 500 },

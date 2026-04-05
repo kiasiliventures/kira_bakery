@@ -94,6 +94,34 @@ export type PesapalTransactionStatusResponse = {
 
 export type NormalizedPesapalPaymentState = PaymentStatus;
 
+export class PesapalInitiationRejectedError extends Error {
+  readonly provider = provider;
+  readonly code: string | null;
+  readonly providerStatus: string | null;
+  readonly providerMessage: string;
+  readonly providerReference: string | null;
+  readonly redirectUrl: string | null;
+  readonly rawResponse: PesapalSubmitOrderResponse;
+
+  constructor(input: {
+    code?: string | null;
+    providerStatus?: string | null;
+    providerMessage: string;
+    providerReference?: string | null;
+    redirectUrl?: string | null;
+    rawResponse: PesapalSubmitOrderResponse;
+  }) {
+    super(input.providerMessage);
+    this.name = "PesapalInitiationRejectedError";
+    this.code = input.code?.trim() || null;
+    this.providerStatus = input.providerStatus?.trim() || null;
+    this.providerMessage = input.providerMessage;
+    this.providerReference = input.providerReference?.trim() || null;
+    this.redirectUrl = input.redirectUrl?.trim() || null;
+    this.rawResponse = input.rawResponse;
+  }
+}
+
 type TokenCache = {
   token: string;
   expiresAt: number;
@@ -104,6 +132,32 @@ const PESAPAL_REQUEST_TIMEOUT_MS = 10_000;
 
 let tokenCache: TokenCache | null = null;
 let ipnRegistrationCache: string | null = null;
+
+function isExplicitPesapalInitiationRejection(response: PesapalSubmitOrderResponse) {
+  return Boolean(
+    response.error?.code
+    || response.error?.message
+    || response.message
+    || response.status,
+  );
+}
+
+export function isPesapalInitiationRejectedError(
+  error: unknown,
+): error is PesapalInitiationRejectedError {
+  return (
+    error instanceof PesapalInitiationRejectedError
+    || (
+      typeof error === "object"
+      && error !== null
+      && "provider" in error
+      && error.provider === provider
+      && "providerMessage" in error
+      && typeof error.providerMessage === "string"
+      && "rawResponse" in error
+    )
+  );
+}
 
 function isProductionRuntime() {
   return process.env.NODE_ENV === "production";
@@ -588,6 +642,22 @@ export async function submitPesapalOrderRequest(
       callbackUrl,
       cancellationUrl,
     });
+
+    if (isExplicitPesapalInitiationRejection(response)) {
+      throw new PesapalInitiationRejectedError({
+        code: response.error?.code ?? null,
+        providerStatus: response.status ?? null,
+        providerMessage:
+          response.error?.message
+          ?? response.message
+          ?? response.status
+          ?? "Pesapal rejected the order request.",
+        providerReference: response.order_tracking_id ?? null,
+        redirectUrl: response.redirect_url ?? null,
+        rawResponse: response,
+      });
+    }
+
     throw new Error(
       response.error?.message ?? response.message ?? "Pesapal order request did not return redirect details.",
     );

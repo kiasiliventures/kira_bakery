@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { PesapalInitiationRejectedError } from "@/lib/payments/providers/pesapal";
 import { getCheckoutMinimumDateValue } from "@/lib/validation";
 
 const validateSameOriginMutationMock = vi.fn();
@@ -10,6 +11,7 @@ const getAuthenticatedUserMock = vi.fn();
 const getOrderAccessTokenMock = vi.fn();
 const getOrderPaymentSnapshotMock = vi.fn();
 const initiateOrderPaymentForOrderMock = vi.fn();
+const cancelRejectedOrderPaymentInitiationMock = vi.fn();
 const setOrderAccessCookieMock = vi.fn();
 const logSecurityEventMock = vi.fn();
 
@@ -27,6 +29,7 @@ vi.mock("@/lib/supabase/server", () => ({
 }));
 
 vi.mock("@/lib/payments/order-payments", () => ({
+  cancelRejectedOrderPaymentInitiation: cancelRejectedOrderPaymentInitiationMock,
   getOrderAccessToken: getOrderAccessTokenMock,
   getOrderPaymentSnapshot: getOrderPaymentSnapshotMock,
   initiateOrderPaymentForOrder: initiateOrderPaymentForOrderMock,
@@ -303,6 +306,7 @@ describe("checkout route regression tests", () => {
     getOrderAccessTokenMock.mockReset();
     getOrderPaymentSnapshotMock.mockReset();
     initiateOrderPaymentForOrderMock.mockReset();
+    cancelRejectedOrderPaymentInitiationMock.mockReset();
     logSecurityEventMock.mockReset();
     initiateOrderPaymentForOrderMock.mockResolvedValue({
       redirectUrl: "https://payments.example/redirect",
@@ -433,6 +437,121 @@ describe("checkout route regression tests", () => {
     });
     expect(getSupabaseServerClientMock).not.toHaveBeenCalled();
     expect(setOrderAccessCookieMock).not.toHaveBeenCalled();
+  });
+
+  it("cancels the order when Pesapal explicitly rejects initiation without tracking details", async () => {
+    getSupabaseServerClientMock.mockReturnValue(
+      buildCheckoutExecutionSupabaseClient({
+        productsData: [
+          {
+            id: "product-1",
+            name: "Milk Bread",
+            image_url: "/bread.jpg",
+            base_price: 4500,
+            stock_quantity: 5,
+            is_available: true,
+            is_published: true,
+          },
+        ],
+      }),
+    );
+    initiateOrderPaymentForOrderMock.mockRejectedValue(
+      new PesapalInitiationRejectedError({
+        code: "maximum_amount_limit_exceeded",
+        providerStatus: "500",
+        providerMessage: "Request Declined.Maximum allowed test transactions limit exceeded",
+        rawResponse: {
+          status: "500",
+          error: {
+            code: "maximum_amount_limit_exceeded",
+            message: "Request Declined.Maximum allowed test transactions limit exceeded",
+          },
+        },
+      }),
+    );
+    cancelRejectedOrderPaymentInitiationMock.mockResolvedValue({
+      orderId: "ignored",
+      customerName: "Jane Doe",
+      orderStatus: "Cancelled",
+      totalUGX: 4500,
+      paymentStatus: "cancelled",
+      viewState: "cancelled",
+      verified: false,
+      items: [],
+    });
+
+    const { POST } = await import("@/app/api/checkout/route");
+
+    const response = await POST(
+      new Request("https://example.com/api/checkout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": "checkout-key-explicit-reject",
+          "X-Checkout-Session": "session-token",
+          Origin: "https://example.com",
+        },
+        body: JSON.stringify(buildValidPayload()),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual(
+      expect.objectContaining({
+        ok: true,
+        id: expect.any(String),
+        paymentStatus: "cancelled",
+      }),
+    );
+    expect(cancelRejectedOrderPaymentInitiationMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orderId: expect.any(String),
+        provider: "pesapal",
+        reasonCode: "maximum_amount_limit_exceeded",
+        reasonMessage: "Request Declined.Maximum allowed test transactions limit exceeded",
+      }),
+    );
+    expect(setOrderAccessCookieMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not auto-cancel the order when initiation fails ambiguously", async () => {
+    getSupabaseServerClientMock.mockReturnValue(
+      buildCheckoutExecutionSupabaseClient({
+        productsData: [
+          {
+            id: "product-1",
+            name: "Milk Bread",
+            image_url: "/bread.jpg",
+            base_price: 4500,
+            stock_quantity: 5,
+            is_available: true,
+            is_published: true,
+          },
+        ],
+      }),
+    );
+    initiateOrderPaymentForOrderMock.mockRejectedValue(new Error("socket timeout"));
+
+    const { POST } = await import("@/app/api/checkout/route");
+
+    const response = await POST(
+      new Request("https://example.com/api/checkout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": "checkout-key-ambiguous-failure",
+          "X-Checkout-Session": "session-token",
+          Origin: "https://example.com",
+        },
+        body: JSON.stringify(buildValidPayload()),
+      }),
+    );
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({
+      message: "Unable to initiate payment.",
+    });
+    expect(cancelRejectedOrderPaymentInitiationMock).not.toHaveBeenCalled();
   });
 
   it("rejects duplicate cart lines that exceed stock in aggregate", async () => {

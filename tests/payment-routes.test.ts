@@ -149,4 +149,29 @@ describe("payment route regression tests", () => {
     });
     expect(initiateOrderPaymentForOrderMock).not.toHaveBeenCalled();
   });
+
+  it("returns conflict when trying to re-initiate a cancelled order", async () => {
+    getOrderAccessCookieMock.mockResolvedValue("access-token");
+    initiateOrderPaymentForOrderMock.mockRejectedValue(new Error("Order payment has been cancelled."));
+
+    const { POST } = await import("@/app/api/payments/pesapal/initiate/route");
+
+    const response = await POST(
+      new Request("https://example.com/api/payments/pesapal/initiate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Origin: "https://example.com",
+        },
+        body: JSON.stringify({
+          orderId: "order-123",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      message: "Order payment has been cancelled.",
+    });
+  });
 });

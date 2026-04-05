@@ -7,10 +7,12 @@ import { verifyDeliveryQuoteToken } from "@/lib/delivery/quote-token";
 import { validateSameOriginMutation } from "@/lib/http/same-origin";
 import { logSecurityEvent } from "@/lib/observability/security-events";
 import {
+  cancelRejectedOrderPaymentInitiation,
   getOrderAccessToken,
   getOrderPaymentSnapshot,
   initiateOrderPaymentForOrder,
 } from "@/lib/payments/order-payments";
+import { isPesapalInitiationRejectedError } from "@/lib/payments/providers/pesapal";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import {
   getAuthenticatedUser,
@@ -613,6 +615,34 @@ async function resumeCheckoutAttempt(
       return response;
     }
 
+    if (error instanceof Error && error.message === "Order payment has been cancelled.") {
+      const accessTokenLookupStartedAt = startTiming();
+      const accessToken = await getOrderAccessToken(row.resource_id);
+      recordTiming(timings, "checkout_resume_token_lookup", accessTokenLookupStartedAt);
+      const snapshotStartedAt = startTiming();
+      const snapshot = await getOrderPaymentSnapshot(row.resource_id, { refresh: false, hint: "cancelled" });
+      recordTiming(timings, "checkout_resume_snapshot", snapshotStartedAt);
+      const responseBody = {
+        ok: true,
+        id: row.resource_id,
+        paymentStatus: snapshot.paymentStatus,
+      };
+      const finalizeStartedAt = startTiming();
+      await finalizeCheckoutAttempt(row.key, 200, responseBody);
+      recordTiming(timings, "checkout_resume_finalize", finalizeStartedAt);
+      const response = NextResponse.json(responseBody, { status: 200 });
+      if (accessToken) {
+        setOrderAccessCookie(response, row.resource_id, accessToken);
+      }
+      recordTiming(timings, "checkout_resume_total", resumeStartedAt);
+      setServerTimingHeaders(response, timings);
+      console.info("checkout_resume_timing", {
+        orderId: row.resource_id,
+        timings,
+      });
+      return response;
+    }
+
     console.error("checkout_payment_resume_failed", {
       orderId: row.resource_id,
       error: error instanceof Error ? error.message : "unknown error",
@@ -905,6 +935,41 @@ export async function POST(request: Request) {
     });
     recordTiming(timings, "checkout_payment_init", paymentInitiationStartedAt);
   } catch (paymentError) {
+    if (
+      isPesapalInitiationRejectedError(paymentError)
+      && !paymentError.providerReference
+      && !paymentError.redirectUrl
+    ) {
+      const cancelledSnapshot = await cancelRejectedOrderPaymentInitiation({
+        orderId,
+        provider: paymentError.provider,
+        reasonCode: paymentError.code,
+        reasonMessage: paymentError.providerMessage,
+      });
+
+      if (cancelledSnapshot) {
+        const responseBody = {
+          ok: true,
+          id: orderId,
+          paymentStatus: cancelledSnapshot.paymentStatus,
+        };
+        const finalizeStartedAt = startTiming();
+        await finalizeCheckoutAttempt(idempotencyKey, 200, responseBody);
+        recordTiming(timings, "checkout_finalize", finalizeStartedAt);
+        const response = NextResponse.json(responseBody, { status: 200 });
+        setOrderAccessCookie(response, orderId, orderAccessToken);
+        recordTiming(timings, "checkout_total", checkoutStartedAt);
+        setServerTimingHeaders(response, timings);
+        console.info("checkout_timing", {
+          orderId,
+          idempotencyKey,
+          timings,
+          outcome: "payment_initiation_rejected",
+        });
+        return response;
+      }
+    }
+
     console.error("checkout_payment_initiation_failed", {
       orderId,
       error: paymentError instanceof Error ? paymentError.message : "unknown error",

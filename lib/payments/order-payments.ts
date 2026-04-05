@@ -32,6 +32,9 @@ type OrderPaymentRow = {
   payment_provider: string | null;
   payment_reference: string | null;
   payment_redirect_url: string | null;
+  payment_initiation_failure_code: string | null;
+  payment_initiation_failure_message: string | null;
+  payment_initiation_failed_at: string | null;
   paid_at: string | null;
   order_tracking_id: string | null;
   fulfillment_review_required: boolean | null;
@@ -193,6 +196,9 @@ const ORDER_PAYMENT_SELECTION = [
   "payment_provider",
   "payment_reference",
   "payment_redirect_url",
+  "payment_initiation_failure_code",
+  "payment_initiation_failure_message",
+  "payment_initiation_failed_at",
   "paid_at",
   "order_tracking_id",
   "fulfillment_review_required",
@@ -221,6 +227,11 @@ const NOT_ALREADY_PAID_FILTER = [
   "payment_status.eq.cancelled",
   "payment_status.eq.canceled",
   "payment_status.eq.invalid",
+].join(",");
+const PENDING_OR_UNPAID_PAYMENT_FILTER = [
+  "payment_status.is.null",
+  "payment_status.eq.unpaid",
+  "payment_status.eq.pending",
 ].join(",");
 
 class OrderAccessDeniedError extends Error {
@@ -427,6 +438,10 @@ function resolveAttemptCurrency(row: OrderPaymentRow, currency: string | null | 
 
 function resolveStoredOrderAmount(row: OrderPaymentRow) {
   return Math.round(Number(row.total_ugx ?? row.total_price ?? 0));
+}
+
+function isPendingOrderLifecycle(row: OrderPaymentRow) {
+  return normalizeOrderStatusLabel(row.order_status ?? row.status, row.payment_status) === "Pending Payment";
 }
 
 function shouldAttemptPaidOrderInventoryDeduction(row: OrderPaymentRow) {
@@ -781,6 +796,10 @@ export async function initiateOrderPaymentForOrder(
     throw new Error("Order has already been paid.");
   }
 
+  if (storedPaymentStatus === "cancelled") {
+    throw new Error("Order payment has been cancelled.");
+  }
+
   if (row.payment_provider && row.payment_provider !== providerName) {
     throw new Error("Order is assigned to a different payment provider.");
   }
@@ -851,6 +870,9 @@ export async function initiateOrderPaymentForOrder(
     payment_status: response.paymentStatus,
     order_tracking_id: response.providerReference,
     payment_redirect_url: response.redirectUrl,
+    payment_initiation_failure_code: null,
+    payment_initiation_failure_message: null,
+    payment_initiation_failed_at: null,
   });
 
   await upsertPaymentAttempt({
@@ -1251,6 +1273,73 @@ export async function getOrderDetailSnapshot(
 
 export const initiatePesapalPaymentForOrder = initiateOrderPaymentForOrder;
 export const syncPesapalPaymentForOrder = syncOrderPaymentForOrder;
+
+export async function cancelRejectedOrderPaymentInitiation(input: {
+  orderId: string;
+  provider: PaymentProviderName;
+  reasonCode?: string | null;
+  reasonMessage: string;
+}): Promise<OrderPaymentSnapshot | null> {
+  const row = await getOrderPaymentRow(input.orderId);
+  if (!row) {
+    throw new Error("Order not found.");
+  }
+
+  const storedPaymentStatus = normalizeStoredPaymentStatus(row.payment_status);
+  if (
+    (row.payment_provider?.trim().toLowerCase() ?? input.provider) !== input.provider
+    || storedPaymentStatus !== "pending"
+    || !isPendingOrderLifecycle(row)
+    || row.order_tracking_id
+    || row.payment_redirect_url
+  ) {
+    return null;
+  }
+
+  const supabase = getSupabaseServerClient();
+  const rejectedAt = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("orders")
+    .update({
+      status: "Cancelled",
+      order_status: "cancelled",
+      payment_status: "cancelled",
+      payment_initiation_failure_code: input.reasonCode?.trim() || null,
+      payment_initiation_failure_message: input.reasonMessage.trim(),
+      payment_initiation_failed_at: rejectedAt,
+    })
+    .eq("id", input.orderId)
+    .eq("payment_provider", input.provider)
+    .is("order_tracking_id", null)
+    .is("payment_redirect_url", null)
+    .in("status", ["Pending Payment"])
+    .or(PENDING_OR_UNPAID_PAYMENT_FILTER)
+    .select(ORDER_PAYMENT_SELECTION)
+    .maybeSingle();
+
+  if (error) {
+    console.error("order_payment_initiation_rejection_cancel_failed", {
+      orderId: input.orderId,
+      provider: input.provider,
+      reasonCode: input.reasonCode ?? null,
+      error: error.message,
+    });
+    throw new Error("Unable to cancel rejected payment initiation.");
+  }
+
+  const updatedRow = (data as OrderPaymentRow | null) ?? await getOrderPaymentRow(input.orderId);
+  if (!updatedRow) {
+    throw new Error("Order not found.");
+  }
+
+  if (normalizeStoredPaymentStatus(updatedRow.payment_status) !== "cancelled") {
+    return null;
+  }
+
+  return buildSnapshot(updatedRow, {
+    hint: "cancelled",
+  });
+}
 
 export async function getOrderAccessToken(orderId: string): Promise<string | null> {
   const row = await getOrderPaymentRow(orderId);

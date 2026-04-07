@@ -4,14 +4,17 @@ import { z } from "zod";
 import { ensureCustomerForUser } from "@/lib/customers";
 import { setOrderAccessCookie } from "@/lib/payments/order-access-cookie";
 import { verifyDeliveryQuoteToken } from "@/lib/delivery/quote-token";
+import { runAfterResponse } from "@/lib/http/after-response";
 import { validateSameOriginMutation } from "@/lib/http/same-origin";
 import { logSecurityEvent } from "@/lib/observability/security-events";
+import { scheduleDueOrderReadyPushProcessing } from "@/lib/push/order-ready";
 import {
   cancelRejectedOrderPaymentInitiation,
   getOrderAccessToken,
   getOrderPaymentSnapshot,
   initiateOrderPaymentForOrder,
   PAYMENT_INITIATION_PENDING_VERIFICATION_ERROR,
+  scheduleDuePendingTrackedPaymentRecovery,
 } from "@/lib/payments/order-payments";
 import { isPesapalInitiationRejectedError } from "@/lib/payments/providers/pesapal";
 import { enforceRateLimit } from "@/lib/rate-limit";
@@ -687,6 +690,11 @@ export async function POST(request: Request) {
     setServerTimingHeaders(response, timings);
     return response;
   }
+
+  runAfterResponse(async () => {
+    await scheduleDuePendingTrackedPaymentRecovery("checkout");
+    await scheduleDueOrderReadyPushProcessing("checkout");
+  });
 
   const idempotencyKey = getIdempotencyKey(request);
   if (!idempotencyKey) {

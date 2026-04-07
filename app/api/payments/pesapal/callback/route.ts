@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
+import { runAfterResponse } from "@/lib/http/after-response";
+import { captureOperationalIncident } from "@/lib/ops/incidents";
 import { logSecurityEvent } from "@/lib/observability/security-events";
+import { scheduleDueOrderReadyPushProcessing } from "@/lib/push/order-ready";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import {
+  scheduleDuePendingTrackedPaymentRecovery,
   syncPesapalPaymentForOrder,
 } from "@/lib/payments/order-payments";
 
@@ -50,6 +54,11 @@ export async function GET(request: Request) {
     cancelled,
   });
 
+  runAfterResponse(async () => {
+    await scheduleDuePendingTrackedPaymentRecovery("pesapal_callback");
+    await scheduleDueOrderReadyPushProcessing("pesapal_callback");
+  });
+
   if (orderId && orderTrackingId && !cancelled) {
     try {
       await syncPesapalPaymentForOrder({
@@ -59,6 +68,18 @@ export async function GET(request: Request) {
         source: "callback",
       });
     } catch (error) {
+      await captureOperationalIncident({
+        type: "payment_callback_sync_failed",
+        severity: "high",
+        source: "pesapal_callback",
+        message: "Pesapal callback payment sync failed.",
+        orderId,
+        paymentTrackingId: orderTrackingId,
+        dedupeKey: `payment_callback_sync_failed:${orderId}:${orderTrackingId}`,
+        context: {
+          error: error instanceof Error ? error.message : "unknown_error",
+        },
+      });
       logSecurityEvent({
         event: "payment_callback_sync_failed",
         severity: "error",

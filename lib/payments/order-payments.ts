@@ -1,6 +1,7 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
+import { captureOperationalIncident } from "@/lib/ops/incidents";
 import { logSecurityEvent } from "@/lib/observability/security-events";
 import { createOrderAccessLinkToken } from "@/lib/payments/order-access-link";
 import {
@@ -54,6 +55,7 @@ type OrderPaymentRow = {
   delivery_fee: number | null;
   notes: string | null;
   created_at: string;
+  updated_at: string;
   order_items?: OrderPaymentItemRow[] | null;
 };
 
@@ -182,8 +184,23 @@ export type OrderPaymentAuthorityResult = {
 };
 
 const PAYMENT_STATUS_REFRESH_REVALIDATE_SECONDS = 15;
+const PAYMENT_INITIATION_LEASE_MS = 90_000;
+const PENDING_PAYMENT_RECOVERY_SOFT_CANCEL_MS = 15 * 60_000;
+const PENDING_PAYMENT_RECOVERY_LOOKBACK_MS = 2 * 60 * 60_000;
+const PENDING_PAYMENT_RECOVERY_VERIFY_THROTTLE_MS = 5 * 60_000;
+const PENDING_PAYMENT_RECOVERY_SCAN_LIMIT = 12;
+const PENDING_PAYMENT_RECOVERY_PROCESS_LIMIT = 2;
+const PENDING_PAYMENT_RECOVERY_MIN_RUN_INTERVAL_MS = 30_000;
 export const PAYMENT_INITIATION_PENDING_VERIFICATION_ERROR =
   "Order payment initiation is pending verification.";
+export type PendingPaymentRecoveryStats = {
+  trigger: string;
+  scanned: number;
+  verified: number;
+  cancelled: number;
+  skipped: number;
+  errors: number;
+};
 const ORDER_PAYMENT_SELECTION = [
   "id",
   "customer_id",
@@ -222,6 +239,7 @@ const ORDER_PAYMENT_SELECTION = [
   "delivery_fee",
   "notes",
   "created_at",
+  "updated_at",
   "order_items(name,price_ugx,quantity,selected_size,selected_flavor)",
 ].join(",");
 const NOT_ALREADY_PAID_FILTER = [
@@ -235,6 +253,8 @@ const NOT_ALREADY_PAID_FILTER = [
   "payment_status.eq.canceled",
   "payment_status.eq.invalid",
 ].join(",");
+let pendingPaymentRecoveryRunPromise: Promise<PendingPaymentRecoveryStats | null> | null = null;
+let pendingPaymentRecoveryLastRunAt = 0;
 
 class OrderAccessDeniedError extends Error {
   constructor() {
@@ -380,6 +400,49 @@ async function claimOrderPaymentInitiation(
   return (data as OrderPaymentRow | null) ?? null;
 }
 
+function isPaymentInitiationLeaseExpired(attemptedAt: string | null | undefined) {
+  if (!attemptedAt) {
+    return false;
+  }
+
+  const attemptedAtMs = Date.parse(attemptedAt);
+  if (Number.isNaN(attemptedAtMs)) {
+    return true;
+  }
+
+  return Date.now() - attemptedAtMs >= PAYMENT_INITIATION_LEASE_MS;
+}
+
+async function releaseStaleOrderPaymentInitiation(
+  orderId: string,
+  attemptedAt: string,
+): Promise<OrderPaymentRow | null> {
+  const supabase = getSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("orders")
+    .update({
+      payment_initiation_attempted_at: null,
+    })
+    .eq("id", orderId)
+    .eq("payment_initiation_attempted_at", attemptedAt)
+    .is("order_tracking_id", null)
+    .is("payment_redirect_url", null)
+    .not("payment_status", "in", "(paid,completed,cancelled,canceled,invalid)")
+    .select(ORDER_PAYMENT_SELECTION)
+    .maybeSingle();
+
+  if (error) {
+    console.error("order_payment_initiation_release_failed", {
+      orderId,
+      attemptedAt,
+      error: error.message,
+    });
+    throw new Error("Unable to release stale order payment initiation.");
+  }
+
+  return (data as OrderPaymentRow | null) ?? null;
+}
+
 function hasCanonicalPaymentFieldsChanged(previous: OrderPaymentRow, next: OrderPaymentRow) {
   return (
     previous.payment_status !== next.payment_status
@@ -462,6 +525,22 @@ function resolveVerifiedPaymentStatus(
   return verifiedStatus;
 }
 
+function resolvePaidLifecycleUpdates(row: OrderPaymentRow): Partial<OrderPaymentRow> {
+  const nextValues: Partial<OrderPaymentRow> = {};
+  const normalizedStatus = row.status?.trim().toLowerCase() ?? "";
+  const normalizedOrderStatus = row.order_status?.trim().toLowerCase() ?? "";
+
+  if (normalizedStatus !== "ready" && normalizedStatus !== "completed") {
+    nextValues.status = "Paid";
+  }
+
+  if (normalizedOrderStatus !== "ready" && normalizedOrderStatus !== "completed") {
+    nextValues.order_status = "paid";
+  }
+
+  return nextValues;
+}
+
 function resolveAttemptCurrency(row: OrderPaymentRow, currency: string | null | undefined) {
   return currency?.trim().toUpperCase() || "UGX";
 }
@@ -472,6 +551,106 @@ function resolveStoredOrderAmount(row: OrderPaymentRow) {
 
 function isPendingOrderLifecycle(row: OrderPaymentRow) {
   return normalizeOrderStatusLabel(row.order_status ?? row.status, row.payment_status) === "Pending Payment";
+}
+
+function isOlderThanThreshold(
+  value: string | null | undefined,
+  thresholdMs: number,
+  nowMs: number,
+) {
+  if (!value) {
+    return true;
+  }
+
+  const parsedMs = Date.parse(value);
+  if (!Number.isFinite(parsedMs)) {
+    return true;
+  }
+
+  return nowMs - parsedMs >= thresholdMs;
+}
+
+function isOlderThanSoftCancelWindow(createdAt: string, nowMs: number) {
+  const createdAtMs = Date.parse(createdAt);
+  if (!Number.isFinite(createdAtMs)) {
+    return false;
+  }
+
+  return nowMs - createdAtMs >= PENDING_PAYMENT_RECOVERY_SOFT_CANCEL_MS;
+}
+
+function isTrackedPendingPaymentEligibleForRecovery(row: OrderPaymentRow, nowMs: number) {
+  return (
+    isPendingOrderLifecycle(row)
+    && normalizeStoredPaymentStatus(row.payment_status) === "pending"
+    && Boolean(row.order_tracking_id)
+    && isOlderThanThreshold(
+      row.payment_last_verified_at,
+      PENDING_PAYMENT_RECOVERY_VERIFY_THROTTLE_MS,
+      nowMs,
+    )
+  );
+}
+
+async function listRecentTrackedPendingOrdersForRecovery(now: Date) {
+  const createdAfter = new Date(
+    now.getTime() - PENDING_PAYMENT_RECOVERY_LOOKBACK_MS,
+  ).toISOString();
+  const supabase = getSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("orders")
+    .select(ORDER_PAYMENT_SELECTION)
+    .eq("status", "Pending Payment")
+    .not("order_tracking_id", "is", null)
+    .not("payment_status", "in", "(paid,completed,cancelled,canceled,invalid)")
+    .gte("created_at", createdAfter)
+    .order("created_at", { ascending: true })
+    .limit(PENDING_PAYMENT_RECOVERY_SCAN_LIMIT);
+
+  if (error) {
+    console.error("pending_payment_recovery_list_failed", {
+      error: error.message,
+    });
+    throw new Error("Unable to list pending payment recoveries.");
+  }
+
+  return (data as OrderPaymentRow[] | null) ?? [];
+}
+
+async function cancelExpiredTrackedPendingOrder(row: OrderPaymentRow) {
+  const supabase = getSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("orders")
+    .update({
+      status: "Cancelled",
+      order_status: "cancelled",
+      payment_status: "cancelled",
+    })
+    .eq("id", row.id)
+    .eq("updated_at", row.updated_at)
+    .eq("status", "Pending Payment")
+    .not("payment_status", "in", "(paid,completed,cancelled,canceled,invalid)")
+    .select(ORDER_PAYMENT_SELECTION)
+    .maybeSingle();
+
+  if (error) {
+    console.error("pending_payment_recovery_cancel_failed", {
+      orderId: row.id,
+      error: error.message,
+    });
+    throw new Error("Unable to cancel expired pending payment.");
+  }
+
+  if (data) {
+    return data as OrderPaymentRow;
+  }
+
+  const latestRow = await getOrderPaymentRow(row.id);
+  if (!latestRow) {
+    throw new Error("Order not found.");
+  }
+
+  return latestRow;
 }
 
 function shouldAttemptPaidOrderInventoryDeduction(row: OrderPaymentRow) {
@@ -730,6 +909,9 @@ async function persistVerifiedPaymentResult(input: {
     paid_at: nextPaidAt,
     order_tracking_id: input.verified.providerReference,
     payment_last_verified_at: input.verified.verifiedAt,
+    ...(input.nextPaymentStatus === "paid"
+      ? resolvePaidLifecycleUpdates(input.row)
+      : {}),
   };
   const wasAlreadyPaid = normalizeStoredPaymentStatus(input.row.payment_status) === "paid";
   const isNowPaid = input.nextPaymentStatus === "paid";
@@ -800,7 +982,7 @@ export async function initiateOrderPaymentForOrder(
     requireAccessToken?: boolean;
   },
 ): Promise<InitiatedOrderPayment> {
-  const row = await getOrderPaymentRow(orderId);
+  let row = await getOrderPaymentRow(orderId);
   if (!row) {
     throw new Error("Order not found.");
   }
@@ -873,7 +1055,66 @@ export async function initiateOrderPaymentForOrder(
   }
 
   if (row.payment_initiation_attempted_at) {
-    throw new Error(PAYMENT_INITIATION_PENDING_VERIFICATION_ERROR);
+    if (!isPaymentInitiationLeaseExpired(row.payment_initiation_attempted_at)) {
+      throw new Error(PAYMENT_INITIATION_PENDING_VERIFICATION_ERROR);
+    }
+
+    const releasedRow = await releaseStaleOrderPaymentInitiation(
+      row.id,
+      row.payment_initiation_attempted_at,
+    );
+
+    if (releasedRow) {
+      console.warn("order_payment_initiation_stale_claim_released", {
+        orderId,
+        attemptedAt: row.payment_initiation_attempted_at,
+      });
+      row = releasedRow;
+    } else {
+      const latestRow = await getOrderPaymentRow(orderId);
+      if (!latestRow) {
+        throw new Error("Order not found.");
+      }
+
+      const latestPaymentStatus = normalizeStoredPaymentStatus(latestRow.payment_status);
+      if (latestPaymentStatus === "paid") {
+        throw new Error("Order has already been paid.");
+      }
+
+      if (latestPaymentStatus === "cancelled") {
+        throw new Error("Order payment has been cancelled.");
+      }
+
+      if (latestRow.order_tracking_id && latestRow.payment_redirect_url) {
+        await upsertPaymentAttempt({
+          orderId: latestRow.id,
+          provider: providerName,
+          providerReference: latestRow.order_tracking_id,
+          amount: latestRow.total_ugx,
+          currency: "UGX",
+          status: latestPaymentStatus,
+          redirectUrl: latestRow.payment_redirect_url,
+          rawProviderResponse: {
+            reusedExistingAttemptAfterStaleClaimReleaseMiss: true,
+            paymentReference: latestRow.payment_reference,
+          },
+          createdAt: latestRow.created_at,
+          verifiedAt: latestRow.paid_at,
+        });
+
+        return {
+          orderId,
+          redirectUrl: latestRow.payment_redirect_url,
+          paymentStatus: latestPaymentStatus,
+        };
+      }
+
+      if (latestRow.payment_initiation_attempted_at) {
+        throw new Error(PAYMENT_INITIATION_PENDING_VERIFICATION_ERROR);
+      }
+
+      row = latestRow;
+    }
   }
 
   const claimedRow = await claimOrderPaymentInitiation(orderId);
@@ -1188,6 +1429,20 @@ export async function verifyOrderPaymentAuthority(
         source: options.source,
         error: inventoryError instanceof Error ? inventoryError.message : "unknown error",
       });
+      await captureOperationalIncident({
+        type: "inventory_deduction_failed_after_payment",
+        severity: "high",
+        source: `payment_authority:${options.source}`,
+        message: "Inventory deduction failed after payment settlement.",
+        orderId,
+        paymentTrackingId: status.providerReference,
+        dedupeKey: `inventory_deduction_failed_after_payment:${orderId}`,
+        context: {
+          provider: providerName,
+          source: options.source,
+          error: inventoryError instanceof Error ? inventoryError.message : "unknown_error",
+        },
+      });
 
       const reviewRow = await markOrderFulfillmentReviewRequired(
         finalRow.id,
@@ -1210,6 +1465,20 @@ export async function verifyOrderPaymentAuthority(
         orderId,
         source: options.source,
         error: adminPushError instanceof Error ? adminPushError.message : "unknown error",
+      });
+      await captureOperationalIncident({
+        type: "admin_paid_order_push_dispatch_failed",
+        severity: "medium",
+        source: `payment_authority:${options.source}`,
+        message: "Admin paid-order push dispatch trigger failed.",
+        orderId,
+        paymentTrackingId: status.providerReference,
+        dedupeKey: `admin_paid_order_push_dispatch_failed:${orderId}`,
+        context: {
+          provider: providerName,
+          source: options.source,
+          error: adminPushError instanceof Error ? adminPushError.message : "unknown_error",
+        },
       });
     }
   }
@@ -1364,6 +1633,142 @@ export async function getOrderDetailSnapshot(
   return buildOrderDetailSnapshot(row, {
     hint: options?.hint,
   });
+}
+
+export async function reconcileDuePendingTrackedPayments(
+  trigger: string,
+  options?: {
+    now?: Date;
+    listOrders?: (now: Date) => Promise<OrderPaymentRow[]>;
+    verifyOrder?: (row: OrderPaymentRow) => Promise<OrderPaymentAuthorityResult>;
+    getLatestOrder?: (orderId: string) => Promise<OrderPaymentRow | null>;
+    cancelOrder?: (row: OrderPaymentRow) => Promise<OrderPaymentRow>;
+  },
+): Promise<PendingPaymentRecoveryStats> {
+  const now = options?.now ?? new Date();
+  const nowMs = now.getTime();
+  const listOrders = options?.listOrders ?? listRecentTrackedPendingOrdersForRecovery;
+  const verifyOrder =
+    options?.verifyOrder
+    ?? ((row: OrderPaymentRow) =>
+      verifyOrderPaymentAuthority(row.id, {
+        orderTrackingId: row.order_tracking_id,
+        source: "recovery",
+      }));
+  const getLatestOrder = options?.getLatestOrder ?? getOrderPaymentRow;
+  const cancelOrder = options?.cancelOrder ?? cancelExpiredTrackedPendingOrder;
+  const scannedOrders = await listOrders(now);
+  const stats: PendingPaymentRecoveryStats = {
+    trigger,
+    scanned: scannedOrders.length,
+    verified: 0,
+    cancelled: 0,
+    skipped: 0,
+    errors: 0,
+  };
+
+  const eligibleOrders = scannedOrders.filter((row) =>
+    isTrackedPendingPaymentEligibleForRecovery(row, nowMs),
+  );
+  stats.skipped = scannedOrders.length - eligibleOrders.length;
+
+  for (const order of eligibleOrders.slice(0, PENDING_PAYMENT_RECOVERY_PROCESS_LIMIT)) {
+    try {
+      await verifyOrder(order);
+      stats.verified += 1;
+
+      const latestRow = await getLatestOrder(order.id);
+      if (
+        latestRow
+        && isTrackedPendingPaymentEligibleForRecovery(latestRow, nowMs)
+        && isOlderThanSoftCancelWindow(latestRow.created_at, nowMs)
+      ) {
+        const cancelledRow = await cancelOrder(latestRow);
+        if (normalizeStoredPaymentStatus(cancelledRow.payment_status) === "cancelled") {
+          stats.cancelled += 1;
+          await captureOperationalIncident({
+            type: "pending_payment_soft_cancelled",
+            severity: "medium",
+            source: `pending_payment_recovery:${trigger}`,
+            message: "Tracked pending payment was soft-cancelled after exceeding the recovery window.",
+            orderId: cancelledRow.id,
+            paymentTrackingId: cancelledRow.order_tracking_id,
+            dedupeKey: `pending_payment_soft_cancelled:${cancelledRow.id}`,
+            context: {
+              trigger,
+              createdAt: cancelledRow.created_at,
+              paymentStatus: cancelledRow.payment_status,
+            },
+          });
+        }
+      }
+    } catch (error) {
+      stats.errors += 1;
+      console.error("pending_payment_recovery_process_failed", {
+        trigger,
+        orderId: order.id,
+        error: error instanceof Error ? error.message : "unknown error",
+      });
+      await captureOperationalIncident({
+        type: "pending_payment_recovery_process_failed",
+        severity: "high",
+        source: `pending_payment_recovery:${trigger}`,
+        message: "Pending payment recovery processing failed for an order.",
+        orderId: order.id,
+        paymentTrackingId: order.order_tracking_id,
+        dedupeKey: `pending_payment_recovery_process_failed:${order.id}`,
+        context: {
+          trigger,
+          error: error instanceof Error ? error.message : "unknown_error",
+        },
+      });
+    }
+  }
+
+  return stats;
+}
+
+export function scheduleDuePendingTrackedPaymentRecovery(trigger: string) {
+  const nowMs = Date.now();
+  if (pendingPaymentRecoveryRunPromise) {
+    return pendingPaymentRecoveryRunPromise;
+  }
+
+  if (nowMs - pendingPaymentRecoveryLastRunAt < PENDING_PAYMENT_RECOVERY_MIN_RUN_INTERVAL_MS) {
+    return null;
+  }
+
+  const runPromise = reconcileDuePendingTrackedPayments(trigger)
+    .then((stats) => {
+      console.info("pending_payment_recovery_completed", stats);
+      pendingPaymentRecoveryLastRunAt = Date.now();
+      return stats;
+    })
+    .catch((error) => {
+      pendingPaymentRecoveryLastRunAt = Date.now();
+      console.error("pending_payment_recovery_failed", {
+        trigger,
+        error: error instanceof Error ? error.message : "unknown error",
+      });
+      void captureOperationalIncident({
+        type: "pending_payment_recovery_due_scan_failed",
+        severity: "medium",
+        source: `pending_payment_recovery:${trigger}`,
+        message: "Pending payment recovery due-scan failed.",
+        dedupeKey: `pending_payment_recovery_due_scan_failed:${trigger}`,
+        context: {
+          trigger,
+          error: error instanceof Error ? error.message : "unknown_error",
+        },
+      });
+      return null;
+    })
+    .finally(() => {
+      pendingPaymentRecoveryRunPromise = null;
+    });
+
+  pendingPaymentRecoveryRunPromise = runPromise;
+  return runPromise;
 }
 
 export const initiatePesapalPaymentForOrder = initiateOrderPaymentForOrder;

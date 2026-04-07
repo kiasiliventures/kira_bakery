@@ -1,11 +1,14 @@
 import { NextResponse } from "next/server";
+import { runAfterResponse } from "@/lib/http/after-response";
 import { getAuthenticatedUser } from "@/lib/supabase/server";
 import { getOrderAccessCookie, setOrderAccessCookie } from "@/lib/payments/order-access-cookie";
 import { verifyOrderAccessLinkToken } from "@/lib/payments/order-access-link";
+import { scheduleDueOrderReadyPushProcessing } from "@/lib/push/order-ready";
 import {
   getOrderAccessToken,
   getOrderDetailSnapshot,
   isOrderAccessDeniedError,
+  scheduleDuePendingTrackedPaymentRecovery,
 } from "@/lib/payments/order-payments";
 import { enforceRateLimit } from "@/lib/rate-limit";
 
@@ -56,6 +59,11 @@ export async function GET(
   if (!authenticatedUser?.id && !accessToken) {
     return NextResponse.json({ message: "Missing order access session." }, { status: 403 });
   }
+
+  runAfterResponse(async () => {
+    await scheduleDuePendingTrackedPaymentRecovery("order_detail");
+    await scheduleDueOrderReadyPushProcessing("order_detail");
+  });
 
   try {
     const order = await getOrderDetailSnapshot(orderId, {

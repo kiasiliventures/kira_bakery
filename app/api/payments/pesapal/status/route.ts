@@ -1,11 +1,14 @@
 import { NextResponse } from "next/server";
+import { runAfterResponse } from "@/lib/http/after-response";
 import { getOrderAccessCookie, setOrderAccessCookie } from "@/lib/payments/order-access-cookie";
 import { verifyOrderAccessLinkToken } from "@/lib/payments/order-access-link";
 import { logSecurityEvent } from "@/lib/observability/security-events";
+import { scheduleDueOrderReadyPushProcessing } from "@/lib/push/order-ready";
 import {
   getOrderAccessToken,
   getOrderPaymentSnapshot,
   isOrderAccessDeniedError,
+  scheduleDuePendingTrackedPaymentRecovery,
 } from "@/lib/payments/order-payments";
 import { enforceRateLimit } from "@/lib/rate-limit";
 
@@ -86,6 +89,11 @@ export async function GET(request: Request) {
     });
     return NextResponse.json({ message: "Missing order access session." }, { status: 403 });
   }
+
+  runAfterResponse(async () => {
+    await scheduleDuePendingTrackedPaymentRecovery("payment_status");
+    await scheduleDueOrderReadyPushProcessing("payment_status");
+  });
 
   console.info("STATUS_ROUTE", {
     orderId,

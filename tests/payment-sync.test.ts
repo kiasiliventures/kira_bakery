@@ -47,6 +47,7 @@ type MockOrderRow = {
   payment_initiation_failure_code: string | null;
   payment_initiation_failure_message: string | null;
   payment_initiation_failed_at: string | null;
+  payment_initiation_attempted_at: string | null;
   paid_at: string | null;
   order_tracking_id: string | null;
   fulfillment_review_required: boolean | null;
@@ -55,6 +56,7 @@ type MockOrderRow = {
   inventory_deduction_status: string | null;
   inventory_deduction_attempted_at: string | null;
   created_at: string;
+  updated_at: string;
   order_items: MockOrderItemRow[];
 };
 
@@ -93,6 +95,7 @@ function createOrderRow(overrides: Partial<MockOrderRow> = {}): MockOrderRow {
     payment_initiation_failure_code: null,
     payment_initiation_failure_message: null,
     payment_initiation_failed_at: null,
+    payment_initiation_attempted_at: null,
     paid_at: null,
     order_tracking_id: "tracking-123",
     fulfillment_review_required: false,
@@ -101,6 +104,7 @@ function createOrderRow(overrides: Partial<MockOrderRow> = {}): MockOrderRow {
     inventory_deduction_status: "not_started",
     inventory_deduction_attempted_at: null,
     created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
     order_items: [],
     ...overrides,
   };
@@ -416,6 +420,196 @@ describe("payment sync regression tests", () => {
     );
   });
 
+  it("releases a stale initiation claim and retries payment initiation", async () => {
+    const orderRow = createOrderRow({
+      payment_status: "pending",
+      payment_redirect_url: null,
+      order_tracking_id: null,
+      payment_initiation_attempted_at: new Date(Date.now() - 5 * 60_000).toISOString(),
+    });
+    const supabase = buildSupabaseHarness(orderRow);
+    const initiatePaymentMock = vi.fn().mockResolvedValue({
+      provider: "pesapal",
+      providerReference: "tracking-456",
+      paymentStatus: "pending",
+      redirectUrl: "https://payments.example.com/retry",
+      rawResponse: { ok: true },
+    });
+
+    getSupabaseServerClientMock.mockReturnValue(supabase.client);
+    getPaymentGatewayMock.mockReturnValue({
+      initiatePayment: initiatePaymentMock,
+    });
+
+    const { initiateOrderPaymentForOrder } = await import("@/lib/payments/order-payments");
+    const result = await initiateOrderPaymentForOrder(orderRow.id, {
+      requestOrigin: "https://kirabakery.com",
+    });
+
+    expect(result).toEqual({
+      orderId: orderRow.id,
+      redirectUrl: "https://payments.example.com/retry",
+      paymentStatus: "pending",
+    });
+    expect(initiatePaymentMock).toHaveBeenCalledTimes(1);
+    expect(supabase.updateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payment_initiation_attempted_at: null,
+      }),
+    );
+    expect(supabase.getOrderRow()).toEqual(
+      expect.objectContaining({
+        order_tracking_id: "tracking-456",
+        payment_redirect_url: "https://payments.example.com/retry",
+        payment_status: "pending",
+      }),
+    );
+  });
+
+  it("reconciles tracked pending orders independently of the admin dashboard", async () => {
+    const pendingOrder = createOrderRow({
+      id: "outside-dashboard-order",
+      payment_redirect_url: null,
+      order_tracking_id: "tracking-outside-dashboard",
+      payment_last_verified_at: null,
+      created_at: "2026-04-07T10:00:00.000Z",
+      updated_at: "2026-04-07T10:00:00.000Z",
+    });
+    const latestOrder = createOrderRow({
+      id: pendingOrder.id,
+      payment_redirect_url: null,
+      order_tracking_id: pendingOrder.order_tracking_id,
+      payment_status: "paid",
+      status: "Paid",
+      order_status: "paid",
+      created_at: pendingOrder.created_at,
+      updated_at: "2026-04-07T10:06:00.000Z",
+    });
+    const listOrders = vi.fn().mockResolvedValue([pendingOrder]);
+    const verifyOrder = vi.fn().mockResolvedValue({
+      ok: true,
+      orderId: pendingOrder.id,
+      provider: "pesapal",
+      verificationState: "paid",
+      providerStatus: "COMPLETED",
+      stickyPaid: false,
+      wasAlreadyPaid: false,
+      isNowPaid: true,
+      justBecamePaid: true,
+      amountExpected: 120000,
+      amountReceived: 120000,
+      currency: "UGX",
+      providerTrackingId: pendingOrder.order_tracking_id,
+      merchantReference: pendingOrder.id,
+      paymentReference: "ref-123",
+      updated: true,
+      orderSnapshot: {
+        orderId: pendingOrder.id,
+        customerName: pendingOrder.customer_name,
+        orderStatus: "Paid",
+        totalUGX: pendingOrder.total_ugx,
+        paymentStatus: "paid",
+        viewState: "success",
+        verified: true,
+        items: [],
+      },
+      message: "Payment verified successfully.",
+    });
+    const getLatestOrder = vi.fn().mockResolvedValue(latestOrder);
+
+    const { reconcileDuePendingTrackedPayments } = await import("@/lib/payments/order-payments");
+    const stats = await reconcileDuePendingTrackedPayments("test_recovery", {
+      now: new Date("2026-04-07T10:20:00.000Z"),
+      listOrders,
+      verifyOrder,
+      getLatestOrder,
+    });
+
+    expect(listOrders).toHaveBeenCalledTimes(1);
+    expect(verifyOrder).toHaveBeenCalledWith(expect.objectContaining({ id: pendingOrder.id }));
+    expect(stats).toEqual(
+      expect.objectContaining({
+        trigger: "test_recovery",
+        scanned: 1,
+        verified: 1,
+        cancelled: 0,
+        errors: 0,
+      }),
+    );
+  });
+
+  it("soft-cancels stale tracked pending orders when reverify still reports pending", async () => {
+    const pendingOrder = createOrderRow({
+      id: "stale-pending-order",
+      payment_redirect_url: null,
+      order_tracking_id: "tracking-stale-pending",
+      payment_last_verified_at: null,
+      created_at: "2026-04-07T09:00:00.000Z",
+      updated_at: "2026-04-07T09:00:00.000Z",
+    });
+    const latestOrder = createOrderRow({
+      ...pendingOrder,
+      updated_at: "2026-04-07T09:16:00.000Z",
+    });
+    const cancelledOrder = createOrderRow({
+      ...pendingOrder,
+      status: "Cancelled",
+      order_status: "cancelled",
+      payment_status: "cancelled",
+      updated_at: "2026-04-07T09:17:00.000Z",
+    });
+    const verifyOrder = vi.fn().mockResolvedValue({
+      ok: true,
+      orderId: pendingOrder.id,
+      provider: "pesapal",
+      verificationState: "pending",
+      providerStatus: "PENDING",
+      stickyPaid: false,
+      wasAlreadyPaid: false,
+      isNowPaid: false,
+      justBecamePaid: false,
+      amountExpected: 120000,
+      amountReceived: 120000,
+      currency: "UGX",
+      providerTrackingId: pendingOrder.order_tracking_id,
+      merchantReference: pendingOrder.id,
+      paymentReference: null,
+      updated: false,
+      orderSnapshot: {
+        orderId: pendingOrder.id,
+        customerName: pendingOrder.customer_name,
+        orderStatus: "Pending Payment",
+        totalUGX: pendingOrder.total_ugx,
+        paymentStatus: "pending",
+        viewState: "pending",
+        verified: false,
+        items: [],
+      },
+      message: "Payment still pending.",
+    });
+    const getLatestOrder = vi.fn().mockResolvedValue(latestOrder);
+    const cancelOrder = vi.fn().mockResolvedValue(cancelledOrder);
+
+    const { reconcileDuePendingTrackedPayments } = await import("@/lib/payments/order-payments");
+    const stats = await reconcileDuePendingTrackedPayments("test_recovery", {
+      now: new Date("2026-04-07T09:20:00.000Z"),
+      listOrders: vi.fn().mockResolvedValue([pendingOrder]),
+      verifyOrder,
+      getLatestOrder,
+      cancelOrder,
+    });
+
+    expect(verifyOrder).toHaveBeenCalledTimes(1);
+    expect(cancelOrder).toHaveBeenCalledWith(expect.objectContaining({ id: pendingOrder.id }));
+    expect(stats).toEqual(
+      expect.objectContaining({
+        verified: 1,
+        cancelled: 1,
+        errors: 0,
+      }),
+    );
+  });
+
   it("keeps an order paid and flags it for review when stock deduction loses the race", async () => {
     const orderRow = createOrderRow({
       order_items: [
@@ -624,10 +818,84 @@ describe("payment sync regression tests", () => {
     );
     expect(supabase.getOrderRow()).toEqual(
       expect.objectContaining({
+        status: "Paid",
+        order_status: "paid",
         payment_status: "paid",
         fulfillment_review_required: true,
         inventory_conflict: false,
         inventory_deduction_status: "review_required",
+      }),
+    );
+  });
+
+  it("recovers a softly-cancelled order back to paid when Pesapal later confirms success", async () => {
+    const verifiedAt = new Date().toISOString();
+    const orderRow = createOrderRow({
+      status: "Cancelled",
+      order_status: "cancelled",
+      payment_status: "cancelled",
+      paid_at: null,
+      inventory_deduction_status: "not_started",
+    });
+    const supabase = buildSupabaseHarness(orderRow, {
+      onRpc: async (_name, _args, state) => {
+        state.orderRow = {
+          ...state.orderRow,
+          status: "Paid",
+          order_status: "paid",
+          payment_status: "paid",
+          paid_at: verifiedAt,
+          fulfillment_review_required: false,
+          fulfillment_review_reason: null,
+          inventory_conflict: false,
+          inventory_deduction_status: "completed",
+          inventory_deduction_attempted_at: verifiedAt,
+        };
+
+        return {
+          data: {
+            inventory_deduction_status: "completed",
+            fulfillment_review_required: false,
+            fulfillment_review_reason: null,
+            inventory_conflict: false,
+            reserved_item_count: 1,
+            conflicted_item_count: 0,
+          },
+          error: null,
+        };
+      },
+    });
+
+    getSupabaseServerClientMock.mockReturnValue(supabase.client);
+    getPaymentGatewayMock.mockReturnValue({
+      verifyPayment: vi.fn().mockResolvedValue({
+        provider: "pesapal",
+        providerReference: "tracking-123",
+        paymentStatus: "paid",
+        providerStatus: "COMPLETED",
+        paymentReference: "ref-123",
+        amount: 120000,
+        currency: "UGX",
+        rawResponse: { ok: true },
+        verifiedAt,
+      }),
+    });
+
+    const { verifyOrderPaymentAuthority } = await import("@/lib/payments/order-payments");
+    const result = await verifyOrderPaymentAuthority(orderRow.id, {
+      orderTrackingId: "tracking-123",
+      source: "ipn",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.isNowPaid).toBe(true);
+    expect(result.orderSnapshot.paymentStatus).toBe("paid");
+    expect(supabase.getOrderRow()).toEqual(
+      expect.objectContaining({
+        status: "Paid",
+        order_status: "paid",
+        payment_status: "paid",
+        inventory_deduction_status: "completed",
       }),
     );
   });

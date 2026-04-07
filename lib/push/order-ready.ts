@@ -2,6 +2,7 @@ import "server-only";
 
 import { buildOrderPath } from "@/lib/orders/order-link";
 
+import { captureOperationalIncident } from "@/lib/ops/incidents";
 import { createOrderAccessLinkToken } from "@/lib/payments/order-access-link";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import {
@@ -55,6 +56,10 @@ const READY_PUSH_RETRY_BASE_DELAY_MS = 60_000;
 const READY_PUSH_MAX_RETRY_ATTEMPTS = 5;
 const READY_PUSH_MAX_RETRY_DELAY_MS = 30 * 60_000;
 const READY_PUSH_STALE_CLAIM_SECONDS = 5 * 60;
+const READY_PUSH_DUE_SCAN_LIMIT = 2;
+const READY_PUSH_MIN_RUN_INTERVAL_MS = 30_000;
+let readyPushProcessingPromise: Promise<ProcessQueuedOrderReadyPushesResult | null> | null = null;
+let readyPushLastRunAt = 0;
 
 class PushTriggerError extends Error {
   status: number;
@@ -293,6 +298,7 @@ async function reschedulePushDispatch(input: {
 
 async function finalizeFailedPushDispatch(input: {
   idempotencyKey: string;
+  orderId: string;
   errorMessage: string;
 }) {
   const supabase = getSupabaseServerClient();
@@ -308,6 +314,19 @@ async function finalizeFailedPushDispatch(input: {
   if (error) {
     throw new Error(`Unable to finalize failed push dispatch: ${error.message}`);
   }
+
+  await captureOperationalIncident({
+    type: "order_ready_push_failed",
+    severity: "medium",
+    source: "order_ready_push",
+    message: "Customer ready push dispatch exhausted retries or failed permanently.",
+    orderId: input.orderId,
+    dedupeKey: `order_ready_push_failed:${input.orderId}`,
+    context: {
+      idempotencyKey: input.idempotencyKey,
+      error: input.errorMessage,
+    },
+  });
 }
 
 async function listDuePushDispatchIdempotencyKeys(limit: number) {
@@ -443,6 +462,7 @@ export async function processOrderReadyPushDispatch(
     } else {
       await finalizeFailedPushDispatch({
         idempotencyKey: dispatch.idempotency_key,
+        orderId: dispatch.order_id,
         errorMessage,
       });
     }
@@ -485,6 +505,52 @@ export async function processDueOrderReadyPushes(
     retried,
     failed,
   };
+}
+
+export function scheduleDueOrderReadyPushProcessing(trigger: string) {
+  const nowMs = Date.now();
+  if (readyPushProcessingPromise) {
+    return readyPushProcessingPromise;
+  }
+
+  if (nowMs - readyPushLastRunAt < READY_PUSH_MIN_RUN_INTERVAL_MS) {
+    return null;
+  }
+
+  const runPromise = processDueOrderReadyPushes(READY_PUSH_DUE_SCAN_LIMIT)
+    .then((stats) => {
+      readyPushLastRunAt = Date.now();
+      console.info("order_ready_push_due_scan_completed", {
+        trigger,
+        ...stats,
+      });
+      return stats;
+    })
+    .catch((error) => {
+      readyPushLastRunAt = Date.now();
+      console.error("order_ready_push_due_scan_failed", {
+        trigger,
+        error: error instanceof Error ? error.message : "unknown_error",
+      });
+      void captureOperationalIncident({
+        type: "order_ready_push_due_scan_failed",
+        severity: "medium",
+        source: "order_ready_push",
+        message: "Customer ready push due-scan failed.",
+        dedupeKey: `order_ready_push_due_scan_failed:${trigger}`,
+        context: {
+          trigger,
+          error: error instanceof Error ? error.message : "unknown_error",
+        },
+      });
+      return null;
+    })
+    .finally(() => {
+      readyPushProcessingPromise = null;
+    });
+
+  readyPushProcessingPromise = runPromise;
+  return runPromise;
 }
 
 export function toPushTriggerResponseStatus(error: unknown) {

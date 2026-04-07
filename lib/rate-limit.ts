@@ -2,6 +2,8 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 
+import { getSupabaseServerClient } from "@/lib/supabase/server";
+
 type RateLimitResult = {
   allowed: boolean;
   remaining: number;
@@ -11,17 +13,6 @@ type RateLimitResult = {
 type EnforceRateLimitOptions = {
   bucketSuffix?: string | null;
 };
-
-type LocalBucket = {
-  hits: number;
-  expiresAt: number;
-};
-
-const localRateLimitStore = new Map<string, LocalBucket>();
-const LOCAL_RATE_LIMIT_CLEANUP_INTERVAL_MS = 60_000;
-const LOCAL_RATE_LIMIT_MAX_BUCKETS = 5_000;
-
-let lastLocalRateLimitCleanupAt = 0;
 
 function hasKnownProxyMarker(request: Request) {
   return Boolean(
@@ -84,89 +75,6 @@ function buildRateLimitKey(
   return `${key}:${suffixFingerprint}`;
 }
 
-function pruneExpiredLocalBuckets(now: number) {
-  for (const [key, value] of localRateLimitStore.entries()) {
-    if (value.expiresAt <= now) {
-      localRateLimitStore.delete(key);
-    }
-  }
-}
-
-function cleanupLocalRateLimitStore(now: number, options?: { force?: boolean }) {
-  const shouldCleanup =
-    options?.force
-    || lastLocalRateLimitCleanupAt === 0
-    || now - lastLocalRateLimitCleanupAt >= LOCAL_RATE_LIMIT_CLEANUP_INTERVAL_MS;
-
-  if (!shouldCleanup) {
-    return;
-  }
-
-  pruneExpiredLocalBuckets(now);
-  lastLocalRateLimitCleanupAt = now;
-}
-
-function evictOldestLocalBucket() {
-  const oldestKey = localRateLimitStore.keys().next().value;
-  if (!oldestKey) {
-    return false;
-  }
-
-  localRateLimitStore.delete(oldestKey);
-  return true;
-}
-
-function ensureLocalRateLimitCapacity(now: number) {
-  if (localRateLimitStore.size < LOCAL_RATE_LIMIT_MAX_BUCKETS) {
-    return;
-  }
-
-  cleanupLocalRateLimitStore(now, { force: true });
-
-  if (localRateLimitStore.size < LOCAL_RATE_LIMIT_MAX_BUCKETS) {
-    return;
-  }
-
-  if (evictOldestLocalBucket()) {
-    console.warn("rate_limit_local_store_evicted_oldest_bucket", {
-      size: localRateLimitStore.size,
-      maxBuckets: LOCAL_RATE_LIMIT_MAX_BUCKETS,
-    });
-  }
-}
-
-function consumeLocalRateLimit(
-  bucketKey: string,
-  limit: number,
-  windowMs: number,
-): RateLimitResult {
-  const now = Date.now();
-  cleanupLocalRateLimitStore(now);
-
-  const existing = localRateLimitStore.get(bucketKey);
-  if (!existing || existing.expiresAt <= now) {
-    ensureLocalRateLimitCapacity(now);
-    localRateLimitStore.set(bucketKey, {
-      hits: 1,
-      expiresAt: now + windowMs,
-    });
-    return {
-      allowed: true,
-      remaining: Math.max(0, limit - 1),
-      retryAfterSeconds: Math.max(1, Math.ceil(windowMs / 1000)),
-    };
-  }
-
-  existing.hits += 1;
-  localRateLimitStore.set(bucketKey, existing);
-
-  return {
-    allowed: existing.hits <= limit,
-    remaining: Math.max(0, limit - Math.min(existing.hits, limit)),
-    retryAfterSeconds: Math.max(1, Math.ceil((existing.expiresAt - now) / 1000)),
-  };
-}
-
 export async function enforceRateLimit(
   request: Request,
   key: string,
@@ -175,5 +83,25 @@ export async function enforceRateLimit(
   options?: EnforceRateLimitOptions,
 ): Promise<RateLimitResult> {
   const bucketKey = buildRateLimitKey(request, key, options);
-  return consumeLocalRateLimit(bucketKey, limit, windowMs);
+  const supabase = getSupabaseServerClient();
+  const { data, error } = await supabase.rpc("consume_rate_limit", {
+    rate_key: bucketKey,
+    max_requests: limit,
+    window_seconds: Math.ceil(windowMs / 1000),
+  });
+
+  if (error) {
+    throw new Error(`Rate limit check failed: ${error.message}`);
+  }
+
+  const result = Array.isArray(data) ? data[0] : data;
+  if (!result) {
+    throw new Error("Rate limit check returned no result.");
+  }
+
+  return {
+    allowed: Boolean(result.allowed),
+    remaining: Number(result.remaining ?? 0),
+    retryAfterSeconds: Number(result.retry_after_seconds ?? 1),
+  };
 }

@@ -23,6 +23,8 @@ export type PushNotificationPayload = {
 };
 
 let vapidConfigured = false;
+const PUSH_TTL_SECONDS = 300;
+const MAX_PUSH_TOPIC_LENGTH = 32;
 
 function requireEnv(name: string): string {
   const value = process.env[name]?.trim();
@@ -46,11 +48,18 @@ function configureWebPush() {
   vapidConfigured = true;
 }
 
+function buildPushTopic(tag: string | undefined) {
+  const sanitized = tag?.replace(/[^A-Za-z0-9_-]/g, "").slice(0, MAX_PUSH_TOPIC_LENGTH);
+  return sanitized ? sanitized : undefined;
+}
+
 export async function sendWebPushNotification(
   subscription: StoredPushSubscription,
   payload: PushNotificationPayload,
 ) {
   configureWebPush();
+
+  const topic = buildPushTopic(payload.tag);
 
   return webpush.sendNotification(
     {
@@ -61,6 +70,11 @@ export async function sendWebPushNotification(
       },
     },
     JSON.stringify(payload),
+    {
+      TTL: PUSH_TTL_SECONDS,
+      urgency: "high",
+      ...(topic ? { topic } : {}),
+    },
   );
 }
 

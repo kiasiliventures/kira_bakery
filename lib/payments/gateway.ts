@@ -12,6 +12,7 @@ export const paymentSyncSources = [
   "ipn",
   "callback",
   "status",
+  "recovery",
   "admin_reverify",
 ] as const;
 

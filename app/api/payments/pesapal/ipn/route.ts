@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
+import { runAfterResponse } from "@/lib/http/after-response";
+import { captureOperationalIncident } from "@/lib/ops/incidents";
 import { logSecurityEvent } from "@/lib/observability/security-events";
-import { syncPesapalPaymentForOrder } from "@/lib/payments/order-payments";
+import { scheduleDueOrderReadyPushProcessing } from "@/lib/push/order-ready";
+import {
+  scheduleDuePendingTrackedPaymentRecovery,
+  syncPesapalPaymentForOrder,
+} from "@/lib/payments/order-payments";
 import { enforceRateLimit } from "@/lib/rate-limit";
 
 type PesapalNotificationPayload = {
@@ -97,6 +103,11 @@ async function handleNotification(request: Request) {
     notificationType: payload.OrderNotificationType ?? null,
   });
 
+  runAfterResponse(async () => {
+    await scheduleDuePendingTrackedPaymentRecovery("pesapal_ipn");
+    await scheduleDueOrderReadyPushProcessing("pesapal_ipn");
+  });
+
   if (!orderId || !orderTrackingId) {
     logSecurityEvent({
       event: "payment_ipn_missing_identifiers",
@@ -122,6 +133,19 @@ async function handleNotification(request: Request) {
       source: "ipn",
     });
   } catch (error) {
+    await captureOperationalIncident({
+      type: "payment_ipn_sync_failed",
+      severity: "high",
+      source: "pesapal_ipn",
+      message: "Pesapal IPN payment sync failed.",
+      orderId,
+      paymentTrackingId: orderTrackingId,
+      dedupeKey: `payment_ipn_sync_failed:${orderId}:${orderTrackingId}`,
+      context: {
+        notificationType: payload.OrderNotificationType ?? null,
+        error: error instanceof Error ? error.message : "unknown_error",
+      },
+    });
     logSecurityEvent({
       event: "payment_ipn_sync_failed",
       severity: "error",

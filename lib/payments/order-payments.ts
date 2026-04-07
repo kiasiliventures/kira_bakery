@@ -614,7 +614,7 @@ async function listRecentTrackedPendingOrdersForRecovery(now: Date) {
     throw new Error("Unable to list pending payment recoveries.");
   }
 
-  return (data as OrderPaymentRow[] | null) ?? [];
+  return (data as unknown as OrderPaymentRow[] | null) ?? [];
 }
 
 async function cancelExpiredTrackedPendingOrder(row: OrderPaymentRow) {
@@ -642,7 +642,7 @@ async function cancelExpiredTrackedPendingOrder(row: OrderPaymentRow) {
   }
 
   if (data) {
-    return data as OrderPaymentRow;
+    return data as unknown as OrderPaymentRow;
   }
 
   const latestRow = await getOrderPaymentRow(row.id);

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const getPaymentGatewayMock = vi.fn();
 const getSupabaseServerClientMock = vi.fn();
 const logSecurityEventMock = vi.fn();
+const triggerAdminPaidOrderPushDispatchMock = vi.fn();
 
 vi.mock("@/lib/payments/gateway", () => ({
   getPaymentGateway: getPaymentGatewayMock,
@@ -14,6 +15,10 @@ vi.mock("@/lib/supabase/server", () => ({
 
 vi.mock("@/lib/observability/security-events", () => ({
   logSecurityEvent: logSecurityEventMock,
+}));
+
+vi.mock("@/lib/push/admin-paid-order", () => ({
+  triggerAdminPaidOrderPushDispatch: triggerAdminPaidOrderPushDispatchMock,
 }));
 
 type MockOrderItemRow = {
@@ -287,6 +292,7 @@ describe("payment sync regression tests", () => {
     getPaymentGatewayMock.mockReset();
     getSupabaseServerClientMock.mockReset();
     logSecurityEventMock.mockReset();
+    triggerAdminPaidOrderPushDispatchMock.mockReset();
   });
 
   it("rejects paid statuses when the provider amount does not match the stored order amount", async () => {
@@ -492,6 +498,8 @@ describe("payment sync regression tests", () => {
       }),
     );
     expect(supabase.rpcSpy).toHaveBeenCalledTimes(1);
+    expect(triggerAdminPaidOrderPushDispatchMock).toHaveBeenCalledTimes(1);
+    expect(triggerAdminPaidOrderPushDispatchMock).toHaveBeenCalledWith(orderRow.id);
   });
 
   it("supports mixed carts by keeping paid state while marking partial stock conflicts for review", async () => {
@@ -690,6 +698,7 @@ describe("payment sync regression tests", () => {
         fulfillment_review_required: false,
       }),
     );
+    expect(triggerAdminPaidOrderPushDispatchMock).not.toHaveBeenCalled();
   });
 
   it("returns the canonical lifecycle label in the payment snapshot", async () => {

@@ -7,6 +7,7 @@ import {
   formatPaymentStatusLabel,
   normalizeOrderStatusLabel,
 } from "@/lib/orders/status";
+import { triggerAdminPaidOrderPushDispatch } from "@/lib/push/admin-paid-order";
 import { getPaymentProvider, parsePaymentProviderName, type PaymentProviderName } from "@/lib/payments/config";
 import {
   getPaymentGateway,
@@ -1198,6 +1199,18 @@ export async function verifyOrderPaymentAuthority(
         finalRow = reviewRow;
         finalPaymentStatus = normalizeStoredPaymentStatus(finalRow.payment_status);
       }
+    }
+  }
+
+  if (persisted.justBecamePaid) {
+    try {
+      await triggerAdminPaidOrderPushDispatch(finalRow.id);
+    } catch (adminPushError) {
+      console.error("admin_paid_order_push_dispatch_failed", {
+        orderId,
+        source: options.source,
+        error: adminPushError instanceof Error ? adminPushError.message : "unknown error",
+      });
     }
   }
 

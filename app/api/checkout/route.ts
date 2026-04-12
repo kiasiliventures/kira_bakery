@@ -22,7 +22,7 @@ import {
   getAuthenticatedUser,
   getSupabaseServerClient as getCheckoutServiceRoleClient,
 } from "@/lib/supabase/server";
-import { checkoutSchema } from "@/lib/validation";
+import { checkoutSchema, clampCheckoutDeliveryDateToEarliestAvailable } from "@/lib/validation";
 
 type SharedCheckoutProductRow = {
   id: string;
@@ -750,9 +750,17 @@ export async function POST(request: Request) {
     return response;
   }
 
+  const customer =
+    parsed.data.customer.deliveryMethod === "delivery" && parsed.data.customer.deliveryDate
+      ? {
+          ...parsed.data.customer,
+          deliveryDate: clampCheckoutDeliveryDateToEarliestAvailable(parsed.data.customer.deliveryDate),
+        }
+      : parsed.data.customer;
+
   const normalizedRequestedItems = normalizeRequestedCheckoutItems(parsed.data.items);
   const normalizedCheckoutPayload = {
-    customer: parsed.data.customer,
+    customer,
     items: normalizedRequestedItems,
   };
   const requestHash = buildCheckoutRequestHash(normalizedCheckoutPayload);
@@ -800,12 +808,12 @@ export async function POST(request: Request) {
     storeLocationId: string;
   } | null;
 
-  if (parsed.data.customer.deliveryMethod === "delivery") {
+  if (customer.deliveryMethod === "delivery") {
     try {
       const quoteVerificationStartedAt = startTiming();
-      const verifiedQuote = verifyDeliveryQuoteToken(parsed.data.customer.deliveryQuoteToken ?? "");
+      const verifiedQuote = verifyDeliveryQuoteToken(customer.deliveryQuoteToken ?? "");
       recordTiming(timings, "checkout_verify_delivery_quote", quoteVerificationStartedAt);
-      if (verifiedQuote.destination.placeId !== parsed.data.customer.deliveryLocation?.placeId) {
+      if (verifiedQuote.destination.placeId !== customer.deliveryLocation?.placeId) {
         const response = badRequest("Delivery location no longer matches the verified quote. Please reselect it.");
         recordTiming(timings, "checkout_total", checkoutStartedAt);
         setServerTimingHeaders(response, timings);
@@ -888,7 +896,6 @@ export async function POST(request: Request) {
     return response;
   }
 
-  const { customer } = parsed.data;
   const authenticatedUser = await getAuthenticatedUser();
   const authenticatedCustomer = authenticatedUser
     ? await ensureCustomerForUser(authenticatedUser, {

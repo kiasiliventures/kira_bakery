@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PesapalInitiationRejectedError } from "@/lib/payments/providers/pesapal";
-import { getCheckoutMinimumDateValue } from "@/lib/validation";
+import { getCheckoutCurrentDateValue, getCheckoutEarliestDeliveryDateValue } from "@/lib/validation";
 
 const validateSameOriginMutationMock = vi.fn();
 const enforceRateLimitMock = vi.fn();
@@ -314,6 +314,10 @@ describe("checkout route regression tests", () => {
       redirectUrl: "https://payments.example/redirect",
       paymentStatus: "pending",
     });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("rejects a stored checkout retry from a different browser session", async () => {
@@ -671,7 +675,7 @@ describe("checkout route regression tests", () => {
   });
 
   it("rejects delivery dates in the past before any order can be created", async () => {
-    const pastDeliveryDate = shiftCheckoutDateValue(getCheckoutMinimumDateValue(), -1);
+    const pastDeliveryDate = shiftCheckoutDateValue(getCheckoutCurrentDateValue(), -1);
 
     getSupabaseServerClientMock.mockReturnValue(
       buildCheckoutValidationOnlySupabaseClient({
@@ -742,6 +746,101 @@ describe("checkout route regression tests", () => {
     expect(getSupabaseServerClientMock).not.toHaveBeenCalled();
     expect(initiateOrderPaymentForOrderMock).not.toHaveBeenCalled();
     expect(setOrderAccessCookieMock).not.toHaveBeenCalled();
+  });
+
+  it("moves the earliest delivery date to the next day after 7pm Kampala time", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-12T16:30:00.000Z"));
+
+    expect(getCheckoutCurrentDateValue()).toBe("2026-04-12");
+    expect(getCheckoutEarliestDeliveryDateValue()).toBe("2026-04-13");
+  });
+
+  it("persists same-day delivery requests as next-day deliveries after the 7pm cutoff", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-12T16:30:00.000Z"));
+
+    let placedOrderPayload: Record<string, unknown> | null = null;
+
+    getSupabaseServerClientMock.mockReturnValue(
+      buildCheckoutExecutionSupabaseClient({
+        productsData: [
+          {
+            id: "product-1",
+            name: "Milk Bread",
+            image_url: "/bread.jpg",
+            base_price: 4500,
+            stock_quantity: 5,
+            is_available: true,
+            is_published: true,
+          },
+        ],
+        onPlaceGuestOrder(payload) {
+          placedOrderPayload = payload;
+        },
+      }),
+    );
+
+    const verifyDeliveryQuoteTokenMock = vi.mocked(
+      (await import("@/lib/delivery/quote-token")).verifyDeliveryQuoteToken,
+    );
+    verifyDeliveryQuoteTokenMock.mockReturnValue({
+      destination: {
+        addressText: "Kira Town, Uganda",
+        placeId: "place-1",
+        latitude: 0.4,
+        longitude: 32.6,
+      },
+      distanceKm: 5.2,
+      deliveryFee: 8000,
+      pricingConfigId: "pricing-config-1",
+      storeLocationId: "store-location-1",
+    });
+
+    const { POST } = await import("@/app/api/checkout/route");
+
+    const response = await POST(
+      new Request("https://example.com/api/checkout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": "checkout-key-next-day-delivery",
+          "X-Checkout-Session": "session-token",
+          Origin: "https://example.com",
+        },
+        body: JSON.stringify({
+          customer: {
+            deliveryMethod: "delivery",
+            customerName: "Jane Doe",
+            phone: "+256700000000",
+            email: "",
+            address: "Kira Town, Uganda",
+            deliveryDate: "2026-04-12",
+            notes: "",
+            deliveryLocation: {
+              placeId: "place-1",
+              addressText: "Kira Town, Uganda",
+              latitude: 0.4,
+              longitude: 32.6,
+            },
+            deliveryQuoteToken: "quote-token",
+          },
+          items: [
+            {
+              productId: "product-1",
+              quantity: 1,
+            },
+          ],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(placedOrderPayload).toEqual(
+      expect.objectContaining({
+        order_delivery_date: "2026-04-13",
+      }),
+    );
   });
 
   it("aggregates duplicate cart lines before persisting the order", async () => {

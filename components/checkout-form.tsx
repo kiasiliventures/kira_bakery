@@ -13,8 +13,9 @@ import { STORAGE_KEYS } from "@/lib/constants";
 import { formatDistanceKm, formatUGX } from "@/lib/format";
 import type { DeliveryQuote, DeliveryResolvedLocation } from "@/lib/delivery/types";
 import {
+  getCheckoutEarliestDeliveryDateValue,
+  getCheckoutCurrentDateValue,
   checkoutSchema,
-  getCheckoutMinimumDateValue,
   type CheckoutSchemaInput,
 } from "@/lib/validation";
 
@@ -74,7 +75,8 @@ function getOrCreateCheckoutSessionToken() {
 export function CheckoutForm({ compact = false }: CheckoutFormProps) {
   const router = useRouter();
   const { items, subtotalUGX } = useCart();
-  const minimumDeliveryDate = getCheckoutMinimumDateValue();
+  const minimumSelectableDate = getCheckoutCurrentDateValue();
+  const earliestDeliveryDate = getCheckoutEarliestDeliveryDateValue();
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitState, setSubmitState] = useState<CheckoutSubmitState>("idle");
   const [deliveryLocation, setDeliveryLocation] = useState<DeliveryResolvedLocation | null>(null);
@@ -350,7 +352,7 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
           id="deliveryDate"
           name="deliveryDate"
           type="date"
-          min={minimumDeliveryDate}
+          min={deliveryMethod === "delivery" ? earliestDeliveryDate : minimumSelectableDate}
           onChange={() => clearFieldError("deliveryDate")}
         />
         {errors.deliveryDate && <p className="text-xs text-danger">{errors.deliveryDate}</p>}
@@ -396,7 +398,7 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
           {deliveryMethod === "pickup"
             ? "Pickup keeps your total at the cart subtotal."
             : hasValidDeliveryQuote
-              ? "Kindly note: deliveries after 7:00 PM will be scheduled for the following day."
+              ? "Orders placed after 7:00 PM will be scheduled for the next delivery day."
               : "Choose a verified location before placing a delivery order."}
         </p>
         <Button

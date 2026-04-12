@@ -6,6 +6,7 @@ const CHECKOUT_LOCATION_FIELD_MAX_LENGTH = 240;
 const CHECKOUT_DELIVERY_QUOTE_TOKEN_MAX_LENGTH = 1_024;
 const CHECKOUT_OPTIONAL_NOTES_MAX_LENGTH = 300;
 const CHECKOUT_BUSINESS_TIME_ZONE = "Africa/Kampala";
+const CHECKOUT_DELIVERY_CUTOFF_HOUR = 19;
 const CHECKOUT_PAST_DATE_MESSAGE = "Choose today or a future date";
 
 function emptyStringToUndefined(value: unknown) {
@@ -39,6 +40,37 @@ function formatDateInCheckoutTimeZone(referenceDate = new Date()) {
   return `${year}-${month}-${day}`;
 }
 
+function getBusinessHour(referenceDate = new Date()) {
+  const formatter = new Intl.DateTimeFormat("en-GB", {
+    timeZone: CHECKOUT_BUSINESS_TIME_ZONE,
+    hour: "2-digit",
+    hour12: false,
+  });
+  const hour = Number(
+    formatter.formatToParts(referenceDate).find((part) => part.type === "hour")?.value,
+  );
+
+  if (!Number.isInteger(hour)) {
+    throw new Error("Unable to format the checkout hour.");
+  }
+
+  return hour;
+}
+
+function shiftCheckoutDateValue(value: string, offsetDays: number) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) {
+    throw new Error("Unable to shift an invalid checkout date.");
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const utcDate = new Date(Date.UTC(year, month - 1, day));
+  utcDate.setUTCDate(utcDate.getUTCDate() + offsetDays);
+  return utcDate.toISOString().slice(0, 10);
+}
+
 function isValidCheckoutDateValue(value: string) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
   if (!match) {
@@ -57,8 +89,30 @@ function isValidCheckoutDateValue(value: string) {
   );
 }
 
-export function getCheckoutMinimumDateValue(referenceDate = new Date()) {
+export function getCheckoutCurrentDateValue(referenceDate = new Date()) {
   return formatDateInCheckoutTimeZone(referenceDate);
+}
+
+export function getCheckoutEarliestDeliveryDateValue(referenceDate = new Date()) {
+  const currentDateValue = getCheckoutCurrentDateValue(referenceDate);
+  // Orders placed after the evening cutoff roll over to the next delivery day.
+  if (getBusinessHour(referenceDate) < CHECKOUT_DELIVERY_CUTOFF_HOUR) {
+    return currentDateValue;
+  }
+
+  return shiftCheckoutDateValue(currentDateValue, 1);
+}
+
+export function clampCheckoutDeliveryDateToEarliestAvailable(
+  deliveryDate: string,
+  referenceDate = new Date(),
+) {
+  if (!isValidCheckoutDateValue(deliveryDate)) {
+    return deliveryDate;
+  }
+
+  const earliestDeliveryDate = getCheckoutEarliestDeliveryDateValue(referenceDate);
+  return deliveryDate < earliestDeliveryDate ? earliestDeliveryDate : deliveryDate;
 }
 
 const optionalFiniteNumber = z.preprocess(
@@ -115,6 +169,7 @@ export const checkoutSchema = z
   .strict()
   .superRefine((data, ctx) => {
     const deliveryDate = data.deliveryDate?.trim();
+    const currentDateValue = getCheckoutCurrentDateValue();
     if (deliveryDate) {
       if (!isValidCheckoutDateValue(deliveryDate)) {
         ctx.addIssue({
@@ -122,7 +177,7 @@ export const checkoutSchema = z
           path: ["deliveryDate"],
           message: "Use a valid delivery date",
         });
-      } else if (deliveryDate < getCheckoutMinimumDateValue()) {
+      } else if (deliveryDate < currentDateValue) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["deliveryDate"],

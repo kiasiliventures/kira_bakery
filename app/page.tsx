@@ -7,7 +7,7 @@ import { getAbsoluteUrl } from "@/lib/site";
 import { PRODUCT_CATEGORIES } from "@/types/product";
 
 export const metadata: Metadata = {
-  title: "Bakery in Kira, Uganda",
+  title: "KiRA Bakery, Uganda",
   description:
     "Discover fresh bread, celebration cakes, pastries, and more from KiRA Bakery in Kira, Uganda.",
   alternates: {

@@ -21,7 +21,7 @@ type LegacyProductRow = {
   id: string;
   name: string;
   description: string;
-  category: ProductCategory;
+  category: string;
   price_ugx: number;
   image: string;
   sold_out: boolean;
@@ -88,11 +88,15 @@ type OrderRow = {
 };
 
 function normalizeCategory(raw: string | undefined): ProductCategory {
-  const value = (raw ?? "").trim().toLowerCase();
-  if (value.includes("bread")) return "Bread";
-  if (value.includes("cake")) return "Cakes";
-  if (value.includes("pastr")) return "Pastries";
-  return "Others";
+  const normalized = (raw ?? "")
+    .trim()
+    .replace(/\s+/g, " ");
+
+  if (!normalized) {
+    return "Others";
+  }
+
+  return normalized.replace(/\b\p{L}/gu, (letter) => letter.toUpperCase());
 }
 
 export function mapSharedProductRow(row: SharedProductRow): Product {
@@ -116,7 +120,7 @@ export function mapLegacyProductRow(row: LegacyProductRow): Product {
     id: row.id,
     name: row.name,
     description: row.description,
-    category: row.category,
+    category: normalizeCategory(row.category),
     priceUGX: row.price_ugx,
     image: row.image,
     soldOut: row.sold_out,

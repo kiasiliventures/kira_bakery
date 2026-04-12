@@ -11,8 +11,16 @@ export const metadata: Metadata = {
   },
 };
 
-export default async function MenuPage() {
+type MenuPageProps = {
+  searchParams?: Promise<{
+    category?: string;
+  }>;
+};
+
+export default async function MenuPage({ searchParams }: MenuPageProps) {
   const products = await getCachedCatalogProducts();
+  const resolvedSearchParams = await searchParams;
+  const initialCategory = resolvedSearchParams?.category?.trim() || undefined;
 
   return (
     <div className="space-y-6">
@@ -20,7 +28,7 @@ export default async function MenuPage() {
       <p className="max-w-2xl text-muted">
         Browse our range of freshly baked breads, cakes, pastries, yoghurt and other delightful treats.
       </p>
-      <MenuCatalog products={products} />
+      <MenuCatalog products={products} initialCategory={initialCategory} />
     </div>
   );
 }

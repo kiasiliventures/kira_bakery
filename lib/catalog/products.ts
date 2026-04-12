@@ -1,13 +1,14 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
+import { CATALOG_PRODUCTS_TAG, getCatalogProductTag } from "@/lib/catalog/cache";
 import {
   mapLegacyAdminProductRow,
   mapLegacyProductRow,
   mapSharedProductRow,
 } from "@/lib/supabase/mappers";
 import { getSupabasePublicServerClient } from "@/lib/supabase/server";
-import { PRODUCT_CATEGORIES, type Product, type ProductCategory } from "@/types/product";
+import { sortProductCategories, type Product, type ProductCategory } from "@/types/product";
 
 type SharedCatalogProductRow = {
   id: string;
@@ -70,6 +71,10 @@ function rememberCatalogProduct(product: Product | null) {
   }
 
   lastKnownCatalogProductsById.set(product.id, product);
+}
+
+export function getCatalogCategories(products: Product[]) {
+  return sortProductCategories(products.map((product) => product.category));
 }
 
 async function loadCatalogProducts(): Promise<Product[]> {
@@ -171,6 +176,7 @@ async function loadCatalogProductById(id: string): Promise<Product | null> {
 
 const getCachedCatalogProductsLoader = unstable_cache(loadCatalogProducts, ["catalog-products"], {
   revalidate: CATALOG_REVALIDATE_SECONDS,
+  tags: [CATALOG_PRODUCTS_TAG],
 });
 
 export async function getCachedCatalogProducts(): Promise<Product[]> {
@@ -196,7 +202,10 @@ export async function getCachedCatalogProductById(id: string): Promise<Product |
     const product = await unstable_cache(
       async () => loadCatalogProductById(id),
       ["catalog-product", id],
-      { revalidate: CATALOG_REVALIDATE_SECONDS },
+      {
+        revalidate: CATALOG_REVALIDATE_SECONDS,
+        tags: [CATALOG_PRODUCTS_TAG, getCatalogProductTag(id)],
+      },
     )();
 
     rememberCatalogProduct(product);
@@ -220,10 +229,8 @@ export async function getCachedCatalogProductById(id: string): Promise<Product |
   }
 }
 
-export async function getCachedCategoryImages(): Promise<
-  Partial<Record<ProductCategory, string[]>>
-> {
-  const result: Partial<Record<ProductCategory, string[]>> = {};
+export async function getCachedCategoryImages(): Promise<Record<ProductCategory, string[]>> {
+  const result: Record<ProductCategory, string[]> = {};
 
   let products: Product[];
   try {
@@ -236,6 +243,7 @@ export async function getCachedCategoryImages(): Promise<
     return result;
   }
 
+  const categories = getCatalogCategories(products);
   const imagesByCategory = new Map<ProductCategory, Set<string>>();
   const imageSortKeysByCategory = new Map<ProductCategory, Map<string, string>>();
   const eligibleProducts = products
@@ -267,7 +275,7 @@ export async function getCachedCategoryImages(): Promise<
 
   const bucket = getWeeklyRotationBucket();
 
-  for (const category of PRODUCT_CATEGORIES) {
+  for (const category of categories) {
     const images = [...(imagesByCategory.get(category) ?? new Set<string>())].sort(
       (left, right) => {
         const sortKeys = imageSortKeysByCategory.get(category);
@@ -278,15 +286,18 @@ export async function getCachedCategoryImages(): Promise<
       },
     );
 
-    if (images.length > 0) {
-      // Monday-based Kampala weeks keep the leading image stable for the whole week,
-      // while preserving the rest of the ordered candidates as client-side fallbacks.
-      const startIndex = bucket % images.length;
-      result[category] = [
-        ...images.slice(startIndex),
-        ...images.slice(0, startIndex),
-      ];
+    if (images.length === 0) {
+      result[category] = [];
+      continue;
     }
+
+    // Monday-based Kampala weeks keep the leading image stable for the whole week,
+    // while preserving the rest of the ordered candidates as client-side fallbacks.
+    const startIndex = bucket % images.length;
+    result[category] = [
+      ...images.slice(startIndex),
+      ...images.slice(0, startIndex),
+    ];
   }
 
   return result;

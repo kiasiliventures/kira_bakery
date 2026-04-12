@@ -32,6 +32,18 @@ type SharedCheckoutProductRow = {
   stock_quantity: number;
   is_available: boolean;
   is_published: boolean;
+  product_variants?: Array<{
+    name: string;
+    price: string | number;
+    is_available: boolean;
+    sort_order?: number | null;
+  }> | null;
+};
+
+type ClientCartSnapshot = {
+  name?: string;
+  image?: string;
+  priceUGX?: number;
 };
 
 type CanonicalCheckoutItem = {
@@ -40,6 +52,7 @@ type CanonicalCheckoutItem = {
   image: string;
   priceUGX: number;
   quantity: number;
+  stockQuantity: number;
   selectedSize?: string;
   selectedFlavor?: string;
 };
@@ -72,6 +85,7 @@ type RequestedCheckoutItem = {
   quantity: number;
   selectedSize?: string;
   selectedFlavor?: string;
+  cartSnapshot?: ClientCartSnapshot;
 };
 
 type SharedPlaceOrderPayload = {
@@ -137,6 +151,19 @@ const checkoutPayloadSchema = z.object({
             `Keep selected flavor under ${MAX_CHECKOUT_OPTION_LENGTH} characters`,
           )
           .optional(),
+        cartSnapshot: z
+          .object({
+            name: z.string().max(200, "Keep product names under 200 characters").optional(),
+            image: z.string().max(500, "Keep product images under 500 characters").optional(),
+            priceUGX: z
+              .number()
+              .int()
+              .min(0, "Keep cart pricing at zero or above")
+              .max(10_000_000, "Keep cart pricing under 10,000,000 UGX")
+              .optional(),
+          })
+          .strict()
+          .optional(),
       }).strict(),
     )
     .min(1, "Cart cannot be empty")
@@ -149,6 +176,30 @@ function badRequest(message: string) {
 
 function conflict(message: string) {
   return NextResponse.json({ message }, { status: 409 });
+}
+
+function staleCart(items: CanonicalCheckoutItem[]) {
+  return NextResponse.json(
+    {
+      code: "STALE_CART",
+      message:
+        "Your cart was updated to match the latest menu. Please review the latest prices and availability before checking out.",
+      cart: {
+        items: items.map((item) => ({
+          productId: item.productId,
+          name: item.name,
+          image: item.image,
+          priceUGX: item.priceUGX,
+          quantity: item.quantity,
+          stockQuantity: item.stockQuantity,
+          selectedSize: item.selectedSize,
+          selectedFlavor: item.selectedFlavor,
+        })),
+        subtotalUGX: items.reduce((sum, item) => sum + item.priceUGX * item.quantity, 0),
+      },
+    },
+    { status: 409 },
+  );
 }
 
 function startTiming() {
@@ -279,34 +330,6 @@ function hasMatchingCheckoutBinding(
   return row.client_binding_hash !== null && row.client_binding_hash === sessionBindingHash;
 }
 
-function buildInsufficientStockMessage(productName: string, stockQuantity: number) {
-  if (stockQuantity <= 0) {
-    return `${productName} is unavailable.`;
-  }
-
-  return `Only ${stockQuantity} piece${stockQuantity === 1 ? "" : "s"} of ${productName} ${
-    stockQuantity === 1 ? "is" : "are"
-  } left.`;
-}
-
-function buildRequestedQuantityByProduct(
-  requestedItems: Array<{
-    productId: string;
-    quantity: number;
-  }>,
-) {
-  const requestedQuantityByProduct = new Map<string, number>();
-
-  for (const item of requestedItems) {
-    requestedQuantityByProduct.set(
-      item.productId,
-      (requestedQuantityByProduct.get(item.productId) ?? 0) + item.quantity,
-    );
-  }
-
-  return requestedQuantityByProduct;
-}
-
 function normalizeOptionalSelection(value?: string) {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
@@ -325,6 +348,7 @@ function normalizeRequestedCheckoutItems(requestedItems: RequestedCheckoutItem[]
       quantity: item.quantity,
       selectedSize: normalizeOptionalSelection(item.selectedSize),
       selectedFlavor: normalizeOptionalSelection(item.selectedFlavor),
+      cartSnapshot: item.cartSnapshot,
     };
     const key = buildRequestedCheckoutItemKey(normalizedItem);
     const existing = normalizedItemsByKey.get(key);
@@ -410,11 +434,12 @@ async function loadCanonicalItems(
 ) {
   const supabase = getCheckoutServiceRoleClient();
   const productIds = [...new Set(requestedItems.map((item) => item.productId))];
-  const requestedQuantityByProduct = buildRequestedQuantityByProduct(requestedItems);
 
   const sharedProducts = await supabase
     .from("products")
-    .select("id,name,image_url,base_price,stock_quantity,is_available,is_published")
+    .select(
+      "id,name,image_url,base_price,stock_quantity,is_available,is_published,product_variants(name,price,is_available,sort_order)",
+    )
     .in("id", productIds);
 
   if (sharedProducts.error) {
@@ -429,32 +454,104 @@ async function loadCanonicalItems(
     ((sharedProducts.data ?? []) as SharedCheckoutProductRow[]).map((product) => [product.id, product]),
   );
   const canonicalItems: CanonicalCheckoutItem[] = [];
+  const remainingStockByProduct = new Map<string, number>();
+  let staleCartDetected = false;
+
+  function getAvailableVariants(product: SharedCheckoutProductRow) {
+    return (product.product_variants ?? [])
+      .filter((variant) => variant.is_available)
+      .sort((left, right) => {
+        const leftSortOrder = left.sort_order ?? 0;
+        const rightSortOrder = right.sort_order ?? 0;
+
+        return leftSortOrder - rightSortOrder || left.name.localeCompare(right.name);
+      });
+  }
+
+  function resolveCanonicalPricing(
+    product: SharedCheckoutProductRow,
+    requestedSize?: string,
+  ) {
+    const availableVariants = getAvailableVariants(product);
+
+    if (availableVariants.length > 0) {
+      const normalizedRequestedSize = normalizeOptionalSelection(requestedSize);
+      const matchedVariant = normalizedRequestedSize
+        ? availableVariants.find((variant) => variant.name === normalizedRequestedSize)
+        : null;
+      const selectedVariant = matchedVariant ?? availableVariants[0];
+
+      return {
+        selectedSize: selectedVariant.name,
+        priceUGX: Math.round(Number(selectedVariant.price)),
+        hasVariantMismatch: Boolean(normalizedRequestedSize && !matchedVariant),
+      };
+    }
+
+    return {
+      selectedSize: normalizeOptionalSelection(requestedSize),
+      priceUGX: Math.round(Number(product.base_price)),
+      hasVariantMismatch: false,
+    };
+  }
 
   for (const item of requestedItems) {
     const product = products.get(item.productId);
     if (!product) {
-      return { response: badRequest("One or more cart items no longer exist.") };
-    }
-    if (!product.is_published || !product.is_available || product.stock_quantity <= 0) {
-      return { response: badRequest(`${product.name} is unavailable.`) };
-    }
-    if ((requestedQuantityByProduct.get(item.productId) ?? 0) > product.stock_quantity) {
-      return {
-        response: badRequest(
-          buildInsufficientStockMessage(product.name, product.stock_quantity),
-        ),
-      };
+      staleCartDetected = true;
+      continue;
     }
 
-    canonicalItems.push({
+    const availableVariants = getAvailableVariants(product);
+    const productHasNoPurchasableVariants =
+      (product.product_variants?.length ?? 0) > 0 && availableVariants.length === 0;
+
+    if (
+      !product.is_published
+      || !product.is_available
+      || product.stock_quantity <= 0
+      || productHasNoPurchasableVariants
+    ) {
+      staleCartDetected = true;
+      continue;
+    }
+
+    const remainingStock = remainingStockByProduct.get(item.productId) ?? product.stock_quantity;
+    const quantity = Math.min(item.quantity, remainingStock);
+    remainingStockByProduct.set(item.productId, Math.max(remainingStock - quantity, 0));
+
+    if (quantity <= 0) {
+      staleCartDetected = true;
+      continue;
+    }
+
+    const pricing = resolveCanonicalPricing(product, item.selectedSize);
+    const canonicalItem: CanonicalCheckoutItem = {
       productId: product.id,
       name: product.name,
       image: product.image_url ?? "",
-      priceUGX: Math.round(Number(product.base_price)),
-      quantity: item.quantity,
-      selectedSize: item.selectedSize,
+      priceUGX: pricing.priceUGX,
+      quantity,
+      stockQuantity: product.stock_quantity,
+      selectedSize: pricing.selectedSize,
       selectedFlavor: item.selectedFlavor,
-    });
+    };
+
+    canonicalItems.push(canonicalItem);
+
+    const clientSnapshot = item.cartSnapshot;
+    const hasCartSnapshotMismatch =
+      (typeof clientSnapshot?.priceUGX === "number" && clientSnapshot.priceUGX !== canonicalItem.priceUGX)
+      || (typeof clientSnapshot?.name === "string" && clientSnapshot.name !== canonicalItem.name)
+      || (typeof clientSnapshot?.image === "string" && clientSnapshot.image !== canonicalItem.image);
+
+    if (quantity !== item.quantity || pricing.hasVariantMismatch || hasCartSnapshotMismatch) {
+      staleCartDetected = true;
+    }
+  }
+
+  if (staleCartDetected) {
+    return { response: staleCart(canonicalItems) };
   }
 
   return { items: canonicalItems };

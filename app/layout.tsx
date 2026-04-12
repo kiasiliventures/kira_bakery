@@ -1,5 +1,4 @@
 import type { Metadata, Viewport } from "next";
-import { Noto_Serif } from "next/font/google";
 import { Analytics } from "@vercel/analytics/react";
 import { SpeedInsights } from "@vercel/speed-insights/next";
 import { MobileCartBar } from "@/components/mobile-cart-bar";
@@ -11,12 +10,6 @@ import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
 import { getAbsoluteUrl, getSiteUrl } from "@/lib/site";
 import "./globals.css";
-
-const notoSerif = Noto_Serif({
-  subsets: ["latin"],
-  variable: "--font-noto-serif",
-  display: "swap",
-});
 
 const themeScript = `
   (() => {
@@ -104,7 +97,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning className={notoSerif.variable}>
+    <html lang="en" suppressHydrationWarning>
       <head>
         <meta name="theme-color" content="#f5e6d3" />
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />

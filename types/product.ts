@@ -5,7 +5,23 @@ export const PRODUCT_CATEGORIES = [
   "Others",
 ] as const;
 
-export type ProductCategory = (typeof PRODUCT_CATEGORIES)[number];
+export type ProductCategory = string;
+
+function getCategoryOrderIndex(category: ProductCategory) {
+  const preferredIndex = PRODUCT_CATEGORIES.findIndex(
+    (preferredCategory) => preferredCategory.toLowerCase() === category.toLowerCase(),
+  );
+
+  return preferredIndex >= 0 ? preferredIndex : Number.MAX_SAFE_INTEGER;
+}
+
+export function sortProductCategories(categories: ProductCategory[]) {
+  return [...new Set(categories.map((category) => category.trim()).filter(Boolean))].sort(
+    (left, right) =>
+      getCategoryOrderIndex(left) - getCategoryOrderIndex(right)
+      || left.localeCompare(right),
+  );
+}
 
 export type ProductOptionSet = {
   sizes?: string[];

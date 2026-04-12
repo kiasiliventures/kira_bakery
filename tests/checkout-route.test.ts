@@ -92,6 +92,11 @@ function normalizeCheckoutPayload(payload: ReturnType<typeof buildValidPayload>)
       quantity: number;
       selectedSize?: string | undefined;
       selectedFlavor?: string | undefined;
+      cartSnapshot?: {
+        name?: string;
+        image?: string;
+        priceUGX?: number;
+      };
     }
   >();
 
@@ -106,6 +111,7 @@ function normalizeCheckoutPayload(payload: ReturnType<typeof buildValidPayload>)
       quantity: item.quantity,
       selectedSize: normalizeOptionalSelection(item.selectedSize),
       selectedFlavor: normalizeOptionalSelection(item.selectedFlavor),
+      cartSnapshot: item.cartSnapshot,
     };
     const key = buildRequestedCheckoutItemKey(normalizedItem);
     const existing = itemsByKey.get(key);
@@ -152,6 +158,13 @@ function buildValidPayload() {
       {
         productId: "product-1",
         quantity: 1,
+        cartSnapshot: undefined as
+          | {
+              name?: string;
+              image?: string;
+              priceUGX?: number;
+            }
+          | undefined,
       },
     ],
   };
@@ -560,7 +573,7 @@ describe("checkout route regression tests", () => {
     expect(cancelRejectedOrderPaymentInitiationMock).not.toHaveBeenCalled();
   });
 
-  it("rejects duplicate cart lines that exceed stock in aggregate", async () => {
+  it("reconciles duplicate cart lines that exceed stock in aggregate", async () => {
     getSupabaseServerClientMock.mockReturnValue(
       buildCheckoutValidationOnlySupabaseClient({
         productsData: [
@@ -612,14 +625,31 @@ describe("checkout route regression tests", () => {
       }),
     );
 
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(409);
     await expect(response.json()).resolves.toEqual({
-      message: "Only 5 pieces of Milk Bread are left.",
+      code: "STALE_CART",
+      message:
+        "Your cart was updated to match the latest menu. Please review the latest prices and availability before checking out.",
+      cart: {
+        items: [
+          {
+            productId: "product-1",
+            name: "Milk Bread",
+            image: "/bread.jpg",
+            priceUGX: 4500,
+            quantity: 5,
+            stockQuantity: 5,
+            selectedSize: undefined,
+            selectedFlavor: undefined,
+          },
+        ],
+        subtotalUGX: 22500,
+      },
     });
     expect(setOrderAccessCookieMock).not.toHaveBeenCalled();
   });
 
-  it("rejects unpublished products even when they are in stock", async () => {
+  it("reconciles unpublished products even when they are in stock", async () => {
     getSupabaseServerClientMock.mockReturnValue(
       buildCheckoutValidationOnlySupabaseClient({
         productsData: [
@@ -667,10 +697,94 @@ describe("checkout route regression tests", () => {
       }),
     );
 
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(409);
     await expect(response.json()).resolves.toEqual({
-      message: "Secret Cake is unavailable.",
+      code: "STALE_CART",
+      message:
+        "Your cart was updated to match the latest menu. Please review the latest prices and availability before checking out.",
+      cart: {
+        items: [],
+        subtotalUGX: 0,
+      },
     });
+    expect(setOrderAccessCookieMock).not.toHaveBeenCalled();
+  });
+
+  it("reconciles stale client pricing against the latest menu before checkout", async () => {
+    getSupabaseServerClientMock.mockReturnValue(
+      buildCheckoutValidationOnlySupabaseClient({
+        productsData: [
+          {
+            id: "product-1",
+            name: "Milk Bread",
+            image_url: "/bread.jpg",
+            base_price: 5200,
+            stock_quantity: 5,
+            is_available: true,
+            is_published: true,
+          },
+        ],
+      }),
+    );
+
+    const { POST } = await import("@/app/api/checkout/route");
+
+    const response = await POST(
+      new Request("https://example.com/api/checkout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": "checkout-key-stale-price",
+          "X-Checkout-Session": "session-token",
+          Origin: "https://example.com",
+        },
+        body: JSON.stringify({
+          customer: {
+            deliveryMethod: "pickup",
+            customerName: "Jane Doe",
+            phone: "+256700000000",
+            email: "",
+            address: "",
+            deliveryDate: "",
+            notes: "",
+          },
+          items: [
+            {
+              productId: "product-1",
+              quantity: 1,
+              cartSnapshot: {
+                name: "Milk Bread",
+                image: "/bread.jpg",
+                priceUGX: 4500,
+              },
+            },
+          ],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      code: "STALE_CART",
+      message:
+        "Your cart was updated to match the latest menu. Please review the latest prices and availability before checking out.",
+      cart: {
+        items: [
+          {
+            productId: "product-1",
+            name: "Milk Bread",
+            image: "/bread.jpg",
+            priceUGX: 5200,
+            quantity: 1,
+            stockQuantity: 5,
+            selectedSize: undefined,
+            selectedFlavor: undefined,
+          },
+        ],
+        subtotalUGX: 5200,
+      },
+    });
+    expect(initiateOrderPaymentForOrderMock).not.toHaveBeenCalled();
     expect(setOrderAccessCookieMock).not.toHaveBeenCalled();
   });
 

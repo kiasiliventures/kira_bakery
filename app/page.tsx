@@ -4,7 +4,7 @@ import Link from "next/link";
 import { CategoryTile } from "@/components/category-tile";
 import { getCachedCategoryImages } from "@/lib/catalog/products";
 import { getAbsoluteUrl } from "@/lib/site";
-import { PRODUCT_CATEGORIES } from "@/types/product";
+import { sortProductCategories } from "@/types/product";
 
 export const metadata: Metadata = {
   title: "KiRA Bakery, Uganda",
@@ -17,6 +17,7 @@ export const metadata: Metadata = {
 
 export default async function HomePage() {
   const categoryImages = await getCachedCategoryImages();
+  const categories = sortProductCategories(Object.keys(categoryImages));
   const localBusinessJsonLd = {
     "@context": "https://schema.org",
     "@type": "Bakery",
@@ -82,11 +83,11 @@ export default async function HomePage() {
       <section>
         <h2 className="mb-6 text-3xl text-foreground">Browse Products</h2>
         <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-4">
-          {PRODUCT_CATEGORIES.map((category) => (
+          {categories.map((category) => (
             <CategoryTile
               key={category}
               name={category}
-              href="/menu"
+              href={`/menu?category=${encodeURIComponent(category)}`}
               images={categoryImages[category]}
             />
           ))}

@@ -69,6 +69,7 @@ type CartContextValue = {
   items: CartItem[];
   addItem: (item: AddCartInput) => void;
   removeItem: (lineKey: string) => void;
+  replaceItems: (items: CartItem[]) => void;
   clearCart: () => void;
   updateQuantity: (lineKey: string, quantity: number) => void;
   itemCount: number;
@@ -181,6 +182,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setItems((prev) => prev.filter((item) => getCartLineKey(item) !== lineKey));
     };
 
+    const replaceItems = (nextItems: CartItem[]) => {
+      setItems(
+        nextItems
+          .map((item) => ({
+            ...item,
+            quantity: clampQuantity(item.quantity, item.stockQuantity),
+          }))
+          .filter((item) => item.quantity > 0),
+      );
+    };
+
     const clearCart = () => setItems([]);
 
     const updateQuantity = (lineKey: string, quantity: number) => {
@@ -208,6 +220,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       items,
       addItem,
       removeItem,
+      replaceItems,
       clearCart,
       updateQuantity,
       itemCount,

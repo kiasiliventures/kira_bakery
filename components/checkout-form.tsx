@@ -18,6 +18,7 @@ import {
   checkoutSchema,
   type CheckoutSchemaInput,
 } from "@/lib/validation";
+import type { CartItem } from "@/types/order";
 
 type CheckoutFormProps = {
   compact?: boolean;
@@ -74,7 +75,7 @@ function getOrCreateCheckoutSessionToken() {
 
 export function CheckoutForm({ compact = false }: CheckoutFormProps) {
   const router = useRouter();
-  const { items, subtotalUGX } = useCart();
+  const { items, subtotalUGX, replaceItems } = useCart();
   const minimumSelectableDate = getCheckoutCurrentDateValue();
   const earliestDeliveryDate = getCheckoutEarliestDeliveryDateValue();
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -220,6 +221,11 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
             quantity: item.quantity,
             selectedSize: item.selectedSize,
             selectedFlavor: item.selectedFlavor,
+            cartSnapshot: {
+              name: item.name,
+              image: item.image,
+              priceUGX: item.priceUGX,
+            },
           })),
         }),
       });
@@ -229,10 +235,23 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
             message?: string;
             id?: string;
             redirectUrl?: string;
+            code?: string;
+            cart?: {
+              items?: CartItem[];
+              subtotalUGX?: number;
+            };
           }
         | null;
 
       if (!response.ok) {
+        if (
+          response.status === 409
+          && payload?.code === "STALE_CART"
+          && Array.isArray(payload.cart?.items)
+        ) {
+          replaceItems(payload.cart.items);
+        }
+
         setErrors({ form: payload?.message ?? "Unable to place order. Please try again." });
         updateSubmitState("error");
         resetSubmitStateAfterError();

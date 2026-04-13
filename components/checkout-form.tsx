@@ -18,7 +18,7 @@ import {
   getCheckoutMinimumSelectableDateValue,
   type CheckoutSchemaInput,
 } from "@/lib/validation";
-import type { CartItem } from "@/types/order";
+import type { CartItem, StaleCartAdjustment, StaleCartPayload } from "@/types/order";
 
 type CheckoutFormProps = {
   compact?: boolean;
@@ -30,6 +30,11 @@ type CheckoutSubmitState =
   | "preparing_payment"
   | "redirecting"
   | "error";
+
+type StaleCartNotice = {
+  message: string;
+  adjustments: StaleCartAdjustment[];
+};
 
 const MIN_PLACING_ORDER_STATE_MS = 250;
 const MIN_PREPARING_PAYMENT_STATE_MS = 250;
@@ -81,6 +86,7 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
   const [deliveryLocation, setDeliveryLocation] = useState<DeliveryResolvedLocation | null>(null);
   const [deliveryQuote, setDeliveryQuote] = useState<DeliveryQuote | null>(null);
   const [isDeliveryQuotePending, setIsDeliveryQuotePending] = useState(false);
+  const [staleCartNotice, setStaleCartNotice] = useState<StaleCartNotice | null>(null);
   const [deliveryMethod, setDeliveryMethod] = useState<"delivery" | "pickup">(
     "delivery",
   );
@@ -97,12 +103,6 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
     deliveryLocation && deliveryQuote && !isDeliveryQuotePending,
   );
   const minimumSelectableDate = getCheckoutMinimumSelectableDateValue(deliveryMethod);
-
-  useEffect(() => {
-    setDeliveryDateValue((currentValue) =>
-      clampCheckoutDateToSelectableMinimum(currentValue, deliveryMethod),
-    );
-  }, [deliveryMethod]);
 
   function updateSubmitState(nextState: CheckoutSubmitState) {
     submitStateRef.current = nextState;
@@ -160,6 +160,45 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
     });
   }
 
+  function handleDeliveryMethodChange(nextMethod: "delivery" | "pickup") {
+    setDeliveryMethod(nextMethod);
+    setDeliveryDateValue((currentValue) =>
+      clampCheckoutDateToSelectableMinimum(currentValue, nextMethod),
+    );
+  }
+
+  function formatAdjustmentMessage(adjustment: StaleCartAdjustment) {
+    const itemLabel = adjustment.currentSelectedSize ?? adjustment.selectedSize
+      ? `${adjustment.name} (${adjustment.currentSelectedSize ?? adjustment.selectedSize})`
+      : adjustment.name;
+
+    if (adjustment.type === "price_changed") {
+      return `${itemLabel}: price changed from ${formatUGX(adjustment.previousPriceUGX ?? 0)} to ${formatUGX(adjustment.currentPriceUGX ?? 0)}.`;
+    }
+
+    if (adjustment.type === "item_unavailable") {
+      return `${itemLabel}: removed because it is no longer available.`;
+    }
+
+    if (adjustment.type === "quantity_adjusted") {
+      return `${itemLabel}: quantity adjusted from ${adjustment.previousQuantity ?? 0} to ${adjustment.currentQuantity ?? 0}.`;
+    }
+
+    if (adjustment.type === "selection_updated") {
+      if (adjustment.previousSelectedSize && adjustment.currentSelectedSize) {
+        return `${adjustment.name}: updated from ${adjustment.previousSelectedSize} to ${adjustment.currentSelectedSize}.`;
+      }
+
+      if (adjustment.currentSelectedSize) {
+        return `${adjustment.name}: updated to ${adjustment.currentSelectedSize}.`;
+      }
+
+      return `${adjustment.name}: selected option was updated to match the latest menu.`;
+    }
+
+    return `${itemLabel}: details were refreshed to match the latest menu.`;
+  }
+
   function handleDeliveryDateChange(event: ChangeEvent<HTMLInputElement>) {
     clearFieldError("deliveryDate");
     const nextValue = event.target.value;
@@ -215,6 +254,7 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
     updateSubmitState("placing_order");
     const placingOrderStartedAt = performance.now();
     setErrors({});
+    setStaleCartNotice(null);
     await waitForNextPaint();
 
     const idempotencyKey = idempotencyKeyRef.current ?? crypto.randomUUID();
@@ -256,6 +296,7 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
               subtotalUGX?: number;
             };
           }
+        | StaleCartPayload
         | null;
 
       if (!response.ok) {
@@ -265,6 +306,12 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
           && Array.isArray(payload.cart?.items)
         ) {
           replaceItems(payload.cart.items);
+          setStaleCartNotice({
+            message: payload.message,
+            adjustments: Array.isArray(payload.adjustments) ? payload.adjustments : [],
+          });
+          updateSubmitState("idle");
+          return;
         }
 
         setErrors({ form: payload?.message ?? "Unable to place order. Please try again." });
@@ -353,7 +400,7 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
             id="deliveryMethod"
             name="deliveryMethod"
             value={deliveryMethod}
-            onChange={(event) => setDeliveryMethod(event.target.value as "delivery" | "pickup")}
+            onChange={(event) => handleDeliveryMethodChange(event.target.value as "delivery" | "pickup")}
           >
             <option value="delivery">Deliver to me</option>
             <option value="pickup">I will pick it up</option>
@@ -427,6 +474,20 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
         </div>
       </div>
 
+      {staleCartNotice && (
+        <div className="space-y-2 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+          <p className="font-semibold">{staleCartNotice.message}</p>
+          {staleCartNotice.adjustments.length > 0 && (
+            <ul className="space-y-1 text-sm">
+              {staleCartNotice.adjustments.map((adjustment, index) => (
+                <li key={`${adjustment.type}:${adjustment.productId}:${index}`}>
+                  {formatAdjustmentMessage(adjustment)}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
       {errors.form && <p className="text-sm text-danger">{errors.form}</p>}
       <div className="flex items-center justify-between">
         <p className="text-xs text-muted">

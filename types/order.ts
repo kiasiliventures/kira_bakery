@@ -17,6 +17,37 @@ export type CartItem = {
   selectedFlavor?: string;
 };
 
+export type StaleCartAdjustmentType =
+  | "price_changed"
+  | "item_unavailable"
+  | "quantity_adjusted"
+  | "selection_updated"
+  | "details_updated";
+
+export type StaleCartAdjustment = {
+  productId: string;
+  name: string;
+  selectedSize?: string;
+  selectedFlavor?: string;
+  type: StaleCartAdjustmentType;
+  previousPriceUGX?: number;
+  currentPriceUGX?: number;
+  previousQuantity?: number;
+  currentQuantity?: number;
+  previousSelectedSize?: string;
+  currentSelectedSize?: string;
+};
+
+export type StaleCartPayload = {
+  code: "STALE_CART";
+  message: string;
+  cart: {
+    items: CartItem[];
+    subtotalUGX: number;
+  };
+  adjustments: StaleCartAdjustment[];
+};
+
 export type CheckoutFormData = {
   deliveryMethod: "delivery" | "pickup";
   customerName: string;

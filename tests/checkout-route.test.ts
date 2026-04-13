@@ -629,7 +629,7 @@ describe("checkout route regression tests", () => {
     await expect(response.json()).resolves.toEqual({
       code: "STALE_CART",
       message:
-        "Your cart was updated to match the latest menu. Please review the latest prices and availability before checking out.",
+        "We refreshed your cart to match the latest menu. Please review the updates below before checking out.",
       cart: {
         items: [
           {
@@ -645,6 +645,17 @@ describe("checkout route regression tests", () => {
         ],
         subtotalUGX: 22500,
       },
+      adjustments: [
+        {
+          productId: "product-1",
+          name: "Milk Bread",
+          selectedSize: undefined,
+          selectedFlavor: undefined,
+          type: "quantity_adjusted",
+          previousQuantity: 6,
+          currentQuantity: 5,
+        },
+      ],
     });
     expect(setOrderAccessCookieMock).not.toHaveBeenCalled();
   });
@@ -701,11 +712,22 @@ describe("checkout route regression tests", () => {
     await expect(response.json()).resolves.toEqual({
       code: "STALE_CART",
       message:
-        "Your cart was updated to match the latest menu. Please review the latest prices and availability before checking out.",
+        "We refreshed your cart to match the latest menu. Please review the updates below before checking out.",
       cart: {
         items: [],
         subtotalUGX: 0,
       },
+      adjustments: [
+        {
+          productId: "product-1",
+          name: "Secret Cake",
+          selectedSize: undefined,
+          selectedFlavor: undefined,
+          type: "item_unavailable",
+          previousQuantity: 1,
+          currentQuantity: 0,
+        },
+      ],
     });
     expect(setOrderAccessCookieMock).not.toHaveBeenCalled();
   });
@@ -767,7 +789,7 @@ describe("checkout route regression tests", () => {
     await expect(response.json()).resolves.toEqual({
       code: "STALE_CART",
       message:
-        "Your cart was updated to match the latest menu. Please review the latest prices and availability before checking out.",
+        "We refreshed your cart to match the latest menu. Please review the updates below before checking out.",
       cart: {
         items: [
           {
@@ -783,6 +805,17 @@ describe("checkout route regression tests", () => {
         ],
         subtotalUGX: 5200,
       },
+      adjustments: [
+        {
+          productId: "product-1",
+          name: "Milk Bread",
+          selectedSize: undefined,
+          selectedFlavor: undefined,
+          type: "price_changed",
+          previousPriceUGX: 4500,
+          currentPriceUGX: 5200,
+        },
+      ],
     });
     expect(initiateOrderPaymentForOrderMock).not.toHaveBeenCalled();
     expect(setOrderAccessCookieMock).not.toHaveBeenCalled();

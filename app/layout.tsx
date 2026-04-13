@@ -8,6 +8,7 @@ import { AppProvider } from "@/components/providers/app-provider";
 import { PwaRegister } from "@/components/pwa-register";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
+import { PostHogProvider } from "@/components/providers/posthog-provider";
 import { getAbsoluteUrl, getSiteUrl } from "@/lib/site";
 import "./globals.css";
 
@@ -103,18 +104,20 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
       <body className="min-h-screen bg-background text-foreground antialiased">
-        <AuthProvider>
-          <AppProvider>
-            <PwaRegister />
-            <PortraitOrientationHint />
-            <SiteHeader />
-            <main className="mx-auto w-full max-w-6xl px-4 py-8 pb-28 lg:pb-8">{children}</main>
-            <MobileCartBar />
-            <SiteFooter />
-            <Analytics />
-            <SpeedInsights />
-          </AppProvider>
-        </AuthProvider>
+        <PostHogProvider>
+          <AuthProvider>
+            <AppProvider>
+              <PwaRegister />
+              <PortraitOrientationHint />
+              <SiteHeader />
+              <main className="mx-auto w-full max-w-6xl px-4 py-8 pb-28 lg:pb-8">{children}</main>
+              <MobileCartBar />
+              <SiteFooter />
+              <Analytics />
+              <SpeedInsights />
+            </AppProvider>
+          </AuthProvider>
+        </PostHogProvider>
       </body>
     </html>
   );

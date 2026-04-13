@@ -23,6 +23,7 @@ import {
   getSupabaseServerClient as getCheckoutServiceRoleClient,
 } from "@/lib/supabase/server";
 import { checkoutSchema, clampCheckoutDeliveryDateToEarliestAvailable } from "@/lib/validation";
+import type { StaleCartAdjustment, StaleCartPayload } from "@/types/order";
 
 type SharedCheckoutProductRow = {
   id: string;
@@ -178,28 +179,55 @@ function conflict(message: string) {
   return NextResponse.json({ message }, { status: 409 });
 }
 
-function staleCart(items: CanonicalCheckoutItem[]) {
-  return NextResponse.json(
-    {
-      code: "STALE_CART",
-      message:
-        "Your cart was updated to match the latest menu. Please review the latest prices and availability before checking out.",
-      cart: {
-        items: items.map((item) => ({
-          productId: item.productId,
-          name: item.name,
-          image: item.image,
-          priceUGX: item.priceUGX,
-          quantity: item.quantity,
-          stockQuantity: item.stockQuantity,
-          selectedSize: item.selectedSize,
-          selectedFlavor: item.selectedFlavor,
-        })),
-        subtotalUGX: items.reduce((sum, item) => sum + item.priceUGX * item.quantity, 0),
-      },
+function buildStaleCartPayload(
+  items: CanonicalCheckoutItem[],
+  adjustments: StaleCartAdjustment[],
+): StaleCartPayload {
+  return {
+    code: "STALE_CART",
+    message:
+      "We refreshed your cart to match the latest menu. Please review the updates below before checking out.",
+    cart: {
+      items: items.map((item) => ({
+        productId: item.productId,
+        name: item.name,
+        image: item.image,
+        priceUGX: item.priceUGX,
+        quantity: item.quantity,
+        stockQuantity: item.stockQuantity,
+        selectedSize: item.selectedSize,
+        selectedFlavor: item.selectedFlavor,
+      })),
+      subtotalUGX: items.reduce((sum, item) => sum + item.priceUGX * item.quantity, 0),
     },
-    { status: 409 },
-  );
+    adjustments,
+  };
+}
+
+function staleCart(items: CanonicalCheckoutItem[], adjustments: StaleCartAdjustment[]) {
+  return NextResponse.json(buildStaleCartPayload(items, adjustments), { status: 409 });
+}
+
+function getRequestedItemDisplayName(
+  item: RequestedCheckoutItem,
+  product?: Pick<SharedCheckoutProductRow, "name"> | null,
+) {
+  const requestedName = item.cartSnapshot?.name?.trim();
+  return requestedName || product?.name || "Item";
+}
+
+function buildAdjustmentBase(
+  item: RequestedCheckoutItem,
+  name: string,
+  overrides: Omit<StaleCartAdjustment, "productId" | "name" | "selectedSize" | "selectedFlavor">,
+): StaleCartAdjustment {
+  return {
+    productId: item.productId,
+    name,
+    selectedSize: item.selectedSize,
+    selectedFlavor: item.selectedFlavor,
+    ...overrides,
+  };
 }
 
 function startTiming() {
@@ -454,6 +482,7 @@ async function loadCanonicalItems(
     ((sharedProducts.data ?? []) as SharedCheckoutProductRow[]).map((product) => [product.id, product]),
   );
   const canonicalItems: CanonicalCheckoutItem[] = [];
+  const adjustments: StaleCartAdjustment[] = [];
   const remainingStockByProduct = new Map<string, number>();
   let staleCartDetected = false;
 
@@ -498,6 +527,13 @@ async function loadCanonicalItems(
   for (const item of requestedItems) {
     const product = products.get(item.productId);
     if (!product) {
+      adjustments.push(
+        buildAdjustmentBase(item, getRequestedItemDisplayName(item), {
+          type: "item_unavailable",
+          previousQuantity: item.quantity,
+          currentQuantity: 0,
+        }),
+      );
       staleCartDetected = true;
       continue;
     }
@@ -512,6 +548,13 @@ async function loadCanonicalItems(
       || product.stock_quantity <= 0
       || productHasNoPurchasableVariants
     ) {
+      adjustments.push(
+        buildAdjustmentBase(item, getRequestedItemDisplayName(item, product), {
+          type: "item_unavailable",
+          previousQuantity: item.quantity,
+          currentQuantity: 0,
+        }),
+      );
       staleCartDetected = true;
       continue;
     }
@@ -521,6 +564,13 @@ async function loadCanonicalItems(
     remainingStockByProduct.set(item.productId, Math.max(remainingStock - quantity, 0));
 
     if (quantity <= 0) {
+      adjustments.push(
+        buildAdjustmentBase(item, getRequestedItemDisplayName(item, product), {
+          type: "item_unavailable",
+          previousQuantity: item.quantity,
+          currentQuantity: 0,
+        }),
+      );
       staleCartDetected = true;
       continue;
     }
@@ -540,18 +590,57 @@ async function loadCanonicalItems(
     canonicalItems.push(canonicalItem);
 
     const clientSnapshot = item.cartSnapshot;
-    const hasCartSnapshotMismatch =
-      (typeof clientSnapshot?.priceUGX === "number" && clientSnapshot.priceUGX !== canonicalItem.priceUGX)
-      || (typeof clientSnapshot?.name === "string" && clientSnapshot.name !== canonicalItem.name)
+    const hasPriceMismatch =
+      typeof clientSnapshot?.priceUGX === "number" && clientSnapshot.priceUGX !== canonicalItem.priceUGX;
+    const hasDetailsMismatch =
+      (typeof clientSnapshot?.name === "string" && clientSnapshot.name !== canonicalItem.name)
       || (typeof clientSnapshot?.image === "string" && clientSnapshot.image !== canonicalItem.image);
 
-    if (quantity !== item.quantity || pricing.hasVariantMismatch || hasCartSnapshotMismatch) {
+    if (quantity !== item.quantity) {
+      adjustments.push(
+        buildAdjustmentBase(item, canonicalItem.name, {
+          type: "quantity_adjusted",
+          previousQuantity: item.quantity,
+          currentQuantity: quantity,
+        }),
+      );
+    }
+
+    if (pricing.hasVariantMismatch) {
+      adjustments.push(
+        buildAdjustmentBase(item, canonicalItem.name, {
+          type: "selection_updated",
+          previousSelectedSize: normalizeOptionalSelection(item.selectedSize),
+          currentSelectedSize: canonicalItem.selectedSize,
+        }),
+      );
+    }
+
+    if (hasPriceMismatch) {
+      adjustments.push(
+        buildAdjustmentBase(item, canonicalItem.name, {
+          type: "price_changed",
+          previousPriceUGX: clientSnapshot?.priceUGX,
+          currentPriceUGX: canonicalItem.priceUGX,
+        }),
+      );
+    }
+
+    if (hasDetailsMismatch) {
+      adjustments.push(
+        buildAdjustmentBase(item, canonicalItem.name, {
+          type: "details_updated",
+        }),
+      );
+    }
+
+    if (quantity !== item.quantity || pricing.hasVariantMismatch || hasPriceMismatch || hasDetailsMismatch) {
       staleCartDetected = true;
     }
   }
 
   if (staleCartDetected) {
-    return { response: staleCart(canonicalItems) };
+    return { response: staleCart(canonicalItems, adjustments) };
   }
 
   return { items: canonicalItems };

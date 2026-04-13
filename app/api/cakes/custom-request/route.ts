@@ -3,7 +3,7 @@ import {
   buildCakeReferenceImagePath,
   CAKE_REFERENCE_IMAGES_BUCKET,
   CAKE_REFERENCE_IMAGE_MAX_SIZE_BYTES,
-  validateCakeReferenceImageFile,
+  validateCakeReferenceImageFileContents,
 } from "@/lib/cake-reference-images";
 import { cakeRequestSchema, parseCakeRequestFormData } from "@/lib/cakes";
 import { createCakeCustomRequest, getCakePrices } from "@/lib/cakes-data";
@@ -41,11 +41,10 @@ async function deleteUploadedReferenceImage(referenceImage: CakeReferenceImage) 
 
 async function uploadReferenceImage(file: File, requestId: string): Promise<CakeReferenceImage> {
   const path = buildCakeReferenceImagePath(requestId, file.name);
-  const fileBuffer = Buffer.from(await file.arrayBuffer());
   const supabase = getSupabaseServerClient();
   const uploadResult = await supabase.storage
     .from(CAKE_REFERENCE_IMAGES_BUCKET)
-    .upload(path, fileBuffer, {
+    .upload(path, file, {
       cacheControl: "3600",
       contentType: file.type,
       upsert: false,
@@ -117,7 +116,7 @@ export async function POST(request: Request) {
     }
 
     if (referenceImageFile) {
-      const referenceImageError = validateCakeReferenceImageFile(referenceImageFile);
+      const referenceImageError = await validateCakeReferenceImageFileContents(referenceImageFile);
       if (referenceImageError) {
         return NextResponse.json({ message: referenceImageError }, { status: 400 });
       }

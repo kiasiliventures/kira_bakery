@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { revalidateCatalogMenuSurfaces } from "@/lib/catalog/cache";
+import {
+  CATALOG_MUTATION_INVALIDATION_MAP,
+  revalidateCatalogMenuSurfaces,
+} from "@/lib/catalog/cache";
 import {
   extractBearerToken,
   InternalRequestAuthError,
@@ -9,15 +12,13 @@ import {
 } from "@/lib/internal-auth";
 
 const CATALOG_REVALIDATION_PURPOSE = "storefront_catalog_revalidation";
+const catalogRevalidationSources = Object.keys(CATALOG_MUTATION_INVALIDATION_MAP) as [
+  keyof typeof CATALOG_MUTATION_INVALIDATION_MAP,
+  ...(keyof typeof CATALOG_MUTATION_INVALIDATION_MAP)[],
+];
 
 const catalogRevalidationBodySchema = z.object({
-  source: z.enum([
-    "admin_product_create",
-    "admin_product_patch",
-    "admin_product_delete",
-    "admin_variant_create",
-    "admin_variant_patch",
-  ]),
+  source: z.enum(catalogRevalidationSources),
   productIds: z.array(z.string().trim().min(1).max(200)).max(50).default([]),
 });
 
@@ -51,7 +52,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const result = revalidateCatalogMenuSurfaces(parsed.data.productIds);
+    const result = revalidateCatalogMenuSurfaces(parsed.data.source, parsed.data.productIds);
 
     return NextResponse.json({
       ok: true,

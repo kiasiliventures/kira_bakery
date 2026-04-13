@@ -41,6 +41,16 @@ type StaleCartNotice = {
   adjustments: StaleCartAdjustment[];
 };
 
+function isStaleCartPayload(payload: unknown): payload is StaleCartPayload {
+  return Boolean(
+    payload
+    && typeof payload === "object"
+    && "code" in payload
+    && payload.code === "STALE_CART"
+    && "cart" in payload,
+  );
+}
+
 const MIN_PLACING_ORDER_STATE_MS = 250;
 const MIN_PREPARING_PAYMENT_STATE_MS = 250;
 const REDIRECTING_PAINT_DELAY_MS = 120;
@@ -317,7 +327,7 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
       if (!response.ok) {
         if (
           response.status === 409
-          && payload?.code === "STALE_CART"
+          && isStaleCartPayload(payload)
           && Array.isArray(payload.cart?.items)
         ) {
           replaceItems(payload.cart.items);

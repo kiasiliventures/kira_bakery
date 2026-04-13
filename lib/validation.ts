@@ -103,16 +103,36 @@ export function getCheckoutEarliestDeliveryDateValue(referenceDate = new Date())
   return shiftCheckoutDateValue(currentDateValue, 1);
 }
 
-export function clampCheckoutDeliveryDateToEarliestAvailable(
+export function getCheckoutMinimumSelectableDateValue(
+  deliveryMethod: "delivery" | "pickup",
+  referenceDate = new Date(),
+) {
+  return deliveryMethod === "delivery"
+    ? getCheckoutEarliestDeliveryDateValue(referenceDate)
+    : getCheckoutCurrentDateValue(referenceDate);
+}
+
+export function clampCheckoutDateToSelectableMinimum(
   deliveryDate: string,
+  deliveryMethod: "delivery" | "pickup",
   referenceDate = new Date(),
 ) {
   if (!isValidCheckoutDateValue(deliveryDate)) {
     return deliveryDate;
   }
 
-  const earliestDeliveryDate = getCheckoutEarliestDeliveryDateValue(referenceDate);
-  return deliveryDate < earliestDeliveryDate ? earliestDeliveryDate : deliveryDate;
+  const minimumSelectableDate = getCheckoutMinimumSelectableDateValue(
+    deliveryMethod,
+    referenceDate,
+  );
+  return deliveryDate < minimumSelectableDate ? minimumSelectableDate : deliveryDate;
+}
+
+export function clampCheckoutDeliveryDateToEarliestAvailable(
+  deliveryDate: string,
+  referenceDate = new Date(),
+) {
+  return clampCheckoutDateToSelectableMinimum(deliveryDate, "delivery", referenceDate);
 }
 
 const optionalFiniteNumber = z.preprocess(

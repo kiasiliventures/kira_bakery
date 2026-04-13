@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { useRouter } from "next/navigation";
 import { DeliveryLocationSearch } from "@/components/delivery-location-search";
 import { useCart } from "@/components/providers/app-provider";
@@ -13,9 +13,9 @@ import { STORAGE_KEYS } from "@/lib/constants";
 import { formatDistanceKm, formatUGX } from "@/lib/format";
 import type { DeliveryQuote, DeliveryResolvedLocation } from "@/lib/delivery/types";
 import {
-  getCheckoutEarliestDeliveryDateValue,
-  getCheckoutCurrentDateValue,
+  clampCheckoutDateToSelectableMinimum,
   checkoutSchema,
+  getCheckoutMinimumSelectableDateValue,
   type CheckoutSchemaInput,
 } from "@/lib/validation";
 import type { CartItem } from "@/types/order";
@@ -76,8 +76,6 @@ function getOrCreateCheckoutSessionToken() {
 export function CheckoutForm({ compact = false }: CheckoutFormProps) {
   const router = useRouter();
   const { items, subtotalUGX, replaceItems } = useCart();
-  const minimumSelectableDate = getCheckoutCurrentDateValue();
-  const earliestDeliveryDate = getCheckoutEarliestDeliveryDateValue();
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitState, setSubmitState] = useState<CheckoutSubmitState>("idle");
   const [deliveryLocation, setDeliveryLocation] = useState<DeliveryResolvedLocation | null>(null);
@@ -85,6 +83,9 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
   const [isDeliveryQuotePending, setIsDeliveryQuotePending] = useState(false);
   const [deliveryMethod, setDeliveryMethod] = useState<"delivery" | "pickup">(
     "delivery",
+  );
+  const [deliveryDateValue, setDeliveryDateValue] = useState(() =>
+    getCheckoutMinimumSelectableDateValue("delivery"),
   );
   const idempotencyKeyRef = useRef<string | null>(null);
   const submitStateRef = useRef<CheckoutSubmitState>("idle");
@@ -95,6 +96,13 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
   const hasValidDeliveryQuote = Boolean(
     deliveryLocation && deliveryQuote && !isDeliveryQuotePending,
   );
+  const minimumSelectableDate = getCheckoutMinimumSelectableDateValue(deliveryMethod);
+
+  useEffect(() => {
+    setDeliveryDateValue((currentValue) =>
+      clampCheckoutDateToSelectableMinimum(currentValue, deliveryMethod),
+    );
+  }, [deliveryMethod]);
 
   function updateSubmitState(nextState: CheckoutSubmitState) {
     submitStateRef.current = nextState;
@@ -152,6 +160,13 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
     });
   }
 
+  function handleDeliveryDateChange(event: ChangeEvent<HTMLInputElement>) {
+    clearFieldError("deliveryDate");
+    const nextValue = event.target.value;
+    const normalizedValue = clampCheckoutDateToSelectableMinimum(nextValue, deliveryMethod);
+    setDeliveryDateValue(normalizedValue);
+  }
+
   const onSubmit = async (formData: FormData) => {
     if (submitStateRef.current !== "idle") {
       return;
@@ -173,7 +188,7 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
       phone: String(formData.get("phone") ?? ""),
       email: String(formData.get("email") ?? ""),
       address: deliveryMethod === "delivery" ? deliveryLocation?.addressText ?? "" : "",
-      deliveryDate: String(formData.get("deliveryDate") ?? ""),
+      deliveryDate: deliveryDateValue || String(formData.get("deliveryDate") ?? ""),
       notes: String(formData.get("notes") ?? ""),
       deliveryLocation:
         deliveryMethod === "delivery"
@@ -371,8 +386,9 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
           id="deliveryDate"
           name="deliveryDate"
           type="date"
-          min={deliveryMethod === "delivery" ? earliestDeliveryDate : minimumSelectableDate}
-          onChange={() => clearFieldError("deliveryDate")}
+          min={minimumSelectableDate}
+          value={deliveryDateValue}
+          onChange={handleDeliveryDateChange}
         />
         {errors.deliveryDate && <p className="text-xs text-danger">{errors.deliveryDate}</p>}
       </div>

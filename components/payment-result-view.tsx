@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { useCart } from "@/components/providers/app-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { STOREFRONT_EVENT_NAMES, captureStorefrontEvent } from "@/lib/analytics/posthog";
 import { formatUGX } from "@/lib/format";
 import { buildOrderPath } from "@/lib/orders/order-link";
 
@@ -65,6 +66,7 @@ export function PaymentResultView() {
   const [requestSequence, setRequestSequence] = useState(0);
   const [pollAttempts, setPollAttempts] = useState(0);
   const hasClearedCartRef = useRef(false);
+  const hasCapturedCompletedOrderRef = useRef(false);
 
   const orderId = searchParams.get("orderId");
   const orderAccessLinkToken = searchParams.get("access");
@@ -146,6 +148,22 @@ export function PaymentResultView() {
     clearCart();
     hasClearedCartRef.current = true;
   }, [clearCart, order?.viewState]);
+
+  useEffect(() => {
+    if (order?.viewState !== "success" || hasCapturedCompletedOrderRef.current) {
+      return;
+    }
+
+    captureStorefrontEvent(STOREFRONT_EVENT_NAMES.orderCompleted, {
+      order_id: order.orderId,
+      total_ugx: order.totalUGX,
+      item_count: order.items.reduce((sum, item) => sum + item.quantity, 0),
+      distinct_item_count: order.items.length,
+      payment_status: order.paymentStatus,
+      verified: order.verified,
+    });
+    hasCapturedCompletedOrderRef.current = true;
+  }, [order]);
 
   useEffect(() => {
     if (

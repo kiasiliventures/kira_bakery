@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { useCart } from "@/components/providers/app-provider";
+import { STOREFRONT_EVENT_NAMES, captureStorefrontEvent } from "@/lib/analytics/posthog";
 import { StorefrontProductImage } from "@/components/storefront-product-image";
 import { formatUGX } from "@/lib/format";
 import {
@@ -66,7 +67,17 @@ export function ProductCard({ product }: ProductCardProps) {
         <Button
           disabled={product.soldOut}
           className="w-full"
-          onClick={() =>
+          onClick={() => {
+            captureStorefrontEvent(STOREFRONT_EVENT_NAMES.addToCart, {
+              product_id: product.id,
+              product_name: product.name,
+              category: product.category,
+              selected_size: defaultVariantSize ?? null,
+              quantity: 1,
+              unit_price_ugx: defaultPriceUGX,
+              source: "menu_card",
+            });
+
             addItem({
               productId: product.id,
               name: product.name,
@@ -74,8 +85,8 @@ export function ProductCard({ product }: ProductCardProps) {
               priceUGX: defaultPriceUGX,
               stockQuantity: product.stockQuantity,
               selectedSize: defaultVariantSize,
-            })
-          }
+            });
+          }}
         >
           {product.soldOut ? "Out of Stock" : "Add to Cart"}
         </Button>

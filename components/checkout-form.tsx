@@ -11,6 +11,11 @@ import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { STORAGE_KEYS } from "@/lib/constants";
 import { formatDistanceKm, formatUGX } from "@/lib/format";
+import {
+  STOREFRONT_EVENT_NAMES,
+  buildStaleCartEventProperties,
+  captureStorefrontEvent,
+} from "@/lib/analytics/posthog";
 import type { DeliveryQuote, DeliveryResolvedLocation } from "@/lib/delivery/types";
 import {
   clampCheckoutDateToSelectableMinimum,
@@ -251,6 +256,16 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
       return;
     }
 
+    captureStorefrontEvent(STOREFRONT_EVENT_NAMES.checkoutStarted, {
+      item_count: items.reduce((sum, item) => sum + item.quantity, 0),
+      distinct_item_count: items.length,
+      subtotal_ugx: subtotalUGX,
+      delivery_method: result.data.deliveryMethod,
+      has_delivery_quote: deliveryMethod === "pickup" ? false : hasValidDeliveryQuote,
+      delivery_fee_ugx: deliveryMethod === "delivery" ? deliveryQuote?.deliveryFee ?? 0 : 0,
+      total_ugx: totalUGX,
+    });
+
     updateSubmitState("placing_order");
     const placingOrderStartedAt = performance.now();
     setErrors({});
@@ -306,9 +321,16 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
           && Array.isArray(payload.cart?.items)
         ) {
           replaceItems(payload.cart.items);
+          const staleCartAdjustments = Array.isArray(payload.adjustments) ? payload.adjustments : [];
+          captureStorefrontEvent(STOREFRONT_EVENT_NAMES.checkoutStaleCart, {
+            item_count: payload.cart.items.reduce((sum, item) => sum + item.quantity, 0),
+            distinct_item_count: payload.cart.items.length,
+            subtotal_ugx: payload.cart.subtotalUGX,
+            ...buildStaleCartEventProperties(staleCartAdjustments),
+          });
           setStaleCartNotice({
-            message: payload.message,
-            adjustments: Array.isArray(payload.adjustments) ? payload.adjustments : [],
+            message: payload.message ?? "We refreshed your cart to match the latest menu.",
+            adjustments: staleCartAdjustments,
           });
           updateSubmitState("idle");
           return;
@@ -326,6 +348,14 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
       idempotencyKeyRef.current = null;
       await waitForNextPaint();
       if (payload?.redirectUrl) {
+        captureStorefrontEvent(STOREFRONT_EVENT_NAMES.paymentRedirect, {
+          order_id: payload.id ?? null,
+          item_count: items.reduce((sum, item) => sum + item.quantity, 0),
+          distinct_item_count: items.length,
+          subtotal_ugx: subtotalUGX,
+          delivery_fee_ugx: deliveryFeeUGX,
+          total_ugx: totalUGX,
+        });
         await waitForMinimumStateDuration(preparingPaymentStartedAt, MIN_PREPARING_PAYMENT_STATE_MS);
         updateSubmitState("redirecting");
         await waitForNextPaint();

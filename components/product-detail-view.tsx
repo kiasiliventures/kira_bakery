@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useCart } from "@/components/providers/app-provider";
 import { StorefrontProductImage } from "@/components/storefront-product-image";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
+import { STOREFRONT_EVENT_NAMES, captureStorefrontEvent } from "@/lib/analytics/posthog";
 import { formatUGX } from "@/lib/format";
 import {
   getDefaultProductSize,
@@ -24,7 +25,9 @@ export function ProductDetailView({ product }: ProductDetailViewProps) {
   const [quantity, setQuantity] = useState(1);
   const [size, setSize] = useState(getDefaultProductSize(product) ?? "");
   const [flavor, setFlavor] = useState(product.options?.flavors?.[0] ?? "");
+  const viewedProductIdRef = useRef<string | null>(null);
   const selectedPriceUGX = getSelectedProductPrice(product, size);
+  const hasVariants = Boolean(product.variantPrices?.length);
 
   const lowStockCount =
     product.stockQuantity && product.stockQuantity > 0 && product.stockQuantity < 10
@@ -35,6 +38,22 @@ export function ProductDetailView({ product }: ProductDetailViewProps) {
       ? Math.min(product.stockQuantity, 5)
       : 5;
   const selectedQuantity = Math.min(quantity, maxSelectableQuantity);
+
+  useEffect(() => {
+    if (viewedProductIdRef.current === product.id) {
+      return;
+    }
+
+    captureStorefrontEvent(STOREFRONT_EVENT_NAMES.menuItemView, {
+      product_id: product.id,
+      product_name: product.name,
+      category: product.category,
+      unit_price_ugx: selectedPriceUGX,
+      has_variants: hasVariants,
+      in_stock: !product.soldOut,
+    });
+    viewedProductIdRef.current = product.id;
+  }, [hasVariants, product.category, product.id, product.name, product.soldOut, selectedPriceUGX]);
 
   return (
     <section className="grid gap-8 lg:grid-cols-2">
@@ -101,7 +120,18 @@ export function ProductDetailView({ product }: ProductDetailViewProps) {
           <Button
             disabled={product.soldOut}
             className="w-full"
-            onClick={() =>
+            onClick={() => {
+              captureStorefrontEvent(STOREFRONT_EVENT_NAMES.addToCart, {
+                product_id: product.id,
+                product_name: product.name,
+                category: product.category,
+                selected_size: size || null,
+                selected_flavor: flavor || null,
+                quantity: selectedQuantity,
+                unit_price_ugx: selectedPriceUGX,
+                source: "product_detail",
+              });
+
               addItem({
                 productId: product.id,
                 name: product.name,
@@ -111,8 +141,8 @@ export function ProductDetailView({ product }: ProductDetailViewProps) {
                 selectedSize: size || undefined,
                 selectedFlavor: flavor || undefined,
                 quantity: selectedQuantity,
-              })
-            }
+              });
+            }}
           >
             {product.soldOut ? "Out of Stock" : "Add to Cart"}
           </Button>

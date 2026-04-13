@@ -41,6 +41,17 @@ type StaleCartNotice = {
   adjustments: StaleCartAdjustment[];
 };
 
+type CheckoutResponsePayload = {
+  message?: string;
+  id?: string;
+  redirectUrl?: string;
+  code?: string;
+  cart?: {
+    items?: CartItem[];
+    subtotalUGX?: number;
+  };
+};
+
 function isStaleCartPayload(payload: unknown): payload is StaleCartPayload {
   return Boolean(
     payload
@@ -311,16 +322,7 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
       });
 
       const payload = (await response.json().catch(() => null)) as
-        | {
-            message?: string;
-            id?: string;
-            redirectUrl?: string;
-            code?: string;
-            cart?: {
-              items?: CartItem[];
-              subtotalUGX?: number;
-            };
-          }
+        | CheckoutResponsePayload
         | StaleCartPayload
         | null;
 
@@ -357,9 +359,10 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
       const preparingPaymentStartedAt = performance.now();
       idempotencyKeyRef.current = null;
       await waitForNextPaint();
-      if (payload?.redirectUrl) {
+      const checkoutResponse = isStaleCartPayload(payload) ? null : payload;
+      if (checkoutResponse?.redirectUrl) {
         captureStorefrontEvent(STOREFRONT_EVENT_NAMES.paymentRedirect, {
-          order_id: payload.id ?? null,
+          order_id: checkoutResponse.id ?? null,
           item_count: items.reduce((sum, item) => sum + item.quantity, 0),
           distinct_item_count: items.length,
           subtotal_ugx: subtotalUGX,
@@ -370,17 +373,17 @@ export function CheckoutForm({ compact = false }: CheckoutFormProps) {
         updateSubmitState("redirecting");
         await waitForNextPaint();
         await wait(REDIRECTING_PAINT_DELAY_MS);
-        window.location.assign(payload.redirectUrl);
+        window.location.assign(checkoutResponse.redirectUrl);
         return;
       }
 
-      if (payload?.id) {
+      if (checkoutResponse?.id) {
         await waitForMinimumStateDuration(preparingPaymentStartedAt, MIN_PREPARING_PAYMENT_STATE_MS);
         updateSubmitState("redirecting");
         await waitForNextPaint();
         await wait(REDIRECTING_PAINT_DELAY_MS);
         const params = new URLSearchParams({
-          orderId: payload.id,
+          orderId: checkoutResponse.id,
         });
         router.push(`/payment/result?${params.toString()}`);
         return;

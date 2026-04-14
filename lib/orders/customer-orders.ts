@@ -1,6 +1,6 @@
 import "server-only";
 
-import { getSupabaseAuthServerClient } from "@/lib/supabase/server";
+import { getSupabaseServerClient } from "@/lib/supabase/server";
 import {
   formatPaymentStatusLabel,
   normalizeOrderStatusLabel,
@@ -59,7 +59,7 @@ const orderSelection = [
 ].join(",");
 
 export async function getCustomerOrders(customerId: string): Promise<CustomerOrderSummary[]> {
-  const supabase = await getSupabaseAuthServerClient();
+  const supabase = getSupabaseServerClient();
   const { data, error } = await supabase
     .from("orders")
     .select(orderSelection)

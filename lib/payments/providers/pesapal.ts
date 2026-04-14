@@ -720,7 +720,9 @@ export function normalizePesapalPaymentState(
     return "failed";
   }
   if (status === "INVALID") {
-    return "cancelled";
+    // Pesapal can briefly report INVALID while the shopper is still filling in details.
+    // We keep that as pending and let the soft-cancel window close abandoned sessions.
+    return "pending";
   }
   return "pending";
 }

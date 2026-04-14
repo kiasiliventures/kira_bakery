@@ -185,7 +185,7 @@ export type OrderPaymentAuthorityResult = {
 
 const PAYMENT_STATUS_REFRESH_REVALIDATE_SECONDS = 15;
 const PAYMENT_INITIATION_LEASE_MS = 90_000;
-const PENDING_PAYMENT_RECOVERY_SOFT_CANCEL_MS = 15 * 60_000;
+const PENDING_PAYMENT_RECOVERY_SOFT_CANCEL_MS = 7 * 60_000;
 const PENDING_PAYMENT_RECOVERY_LOOKBACK_MS = 2 * 60 * 60_000;
 const PENDING_PAYMENT_RECOVERY_VERIFY_THROTTLE_MS = 5 * 60_000;
 const PENDING_PAYMENT_RECOVERY_SCAN_LIMIT = 12;
@@ -276,7 +276,7 @@ function normalizeStoredPaymentStatus(paymentStatus: string | null | undefined):
     return "failed";
   }
 
-  if (normalized === "cancelled" || normalized === "canceled" || normalized === "invalid") {
+  if (normalized === "cancelled" || normalized === "canceled") {
     return "cancelled";
   }
 
@@ -385,7 +385,7 @@ async function claimOrderPaymentInitiation(
     .is("order_tracking_id", null)
     .is("payment_redirect_url", null)
     .is("payment_initiation_attempted_at", null)
-    .not("payment_status", "in", "(paid,completed,cancelled,canceled,invalid)")
+    .not("payment_status", "in", "(paid,completed,cancelled,canceled)")
     .select(ORDER_PAYMENT_SELECTION)
     .maybeSingle();
 
@@ -427,7 +427,7 @@ async function releaseStaleOrderPaymentInitiation(
     .eq("payment_initiation_attempted_at", attemptedAt)
     .is("order_tracking_id", null)
     .is("payment_redirect_url", null)
-    .not("payment_status", "in", "(paid,completed,cancelled,canceled,invalid)")
+    .not("payment_status", "in", "(paid,completed,cancelled,canceled)")
     .select(ORDER_PAYMENT_SELECTION)
     .maybeSingle();
 
@@ -602,7 +602,7 @@ async function listRecentTrackedPendingOrdersForRecovery(now: Date) {
     .select(ORDER_PAYMENT_SELECTION)
     .eq("status", "Pending Payment")
     .not("order_tracking_id", "is", null)
-    .not("payment_status", "in", "(paid,completed,cancelled,canceled,invalid)")
+    .not("payment_status", "in", "(paid,completed,cancelled,canceled)")
     .gte("created_at", createdAfter)
     .order("created_at", { ascending: true })
     .limit(PENDING_PAYMENT_RECOVERY_SCAN_LIMIT);
@@ -629,7 +629,7 @@ async function cancelExpiredTrackedPendingOrder(row: OrderPaymentRow) {
     .eq("id", row.id)
     .eq("updated_at", row.updated_at)
     .eq("status", "Pending Payment")
-    .not("payment_status", "in", "(paid,completed,cancelled,canceled,invalid)")
+    .not("payment_status", "in", "(paid,completed,cancelled,canceled)")
     .select(ORDER_PAYMENT_SELECTION)
     .maybeSingle();
 
@@ -1822,7 +1822,7 @@ export async function cancelRejectedOrderPaymentInitiation(input: {
     .eq("id", input.orderId)
     .is("order_tracking_id", null)
     .is("payment_redirect_url", null)
-    .not("payment_status", "in", "(paid,completed,cancelled,canceled,invalid)")
+    .not("payment_status", "in", "(paid,completed,cancelled,canceled)")
     .select(ORDER_PAYMENT_SELECTION)
     .maybeSingle();
 

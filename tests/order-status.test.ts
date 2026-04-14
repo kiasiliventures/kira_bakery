@@ -27,7 +27,7 @@ describe("order status normalization", () => {
   it("normalizes payment values consistently", () => {
     expect(normalizePaymentStatusValue("completed")).toBe("paid");
     expect(normalizePaymentStatusValue("reversed")).toBe("failed");
-    expect(normalizePaymentStatusValue("invalid")).toBe("cancelled");
+    expect(normalizePaymentStatusValue("invalid")).toBe("pending");
     expect(normalizePaymentStatusValue("unpaid")).toBe("pending");
   });
 

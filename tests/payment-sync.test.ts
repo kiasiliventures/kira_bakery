@@ -538,6 +538,70 @@ describe("payment sync regression tests", () => {
     );
   });
 
+  it("keeps tracked pending orders open during the 7-minute grace period", async () => {
+    const pendingOrder = createOrderRow({
+      id: "fresh-pending-order",
+      payment_redirect_url: null,
+      order_tracking_id: "tracking-fresh-pending",
+      created_at: "2026-04-07T09:14:00.000Z",
+      updated_at: "2026-04-07T09:14:00.000Z",
+    });
+    const latestOrder = createOrderRow({
+      ...pendingOrder,
+      updated_at: "2026-04-07T09:15:00.000Z",
+    });
+    const verifyOrder = vi.fn().mockResolvedValue({
+      ok: true,
+      orderId: pendingOrder.id,
+      provider: "pesapal",
+      verificationState: "pending",
+      providerStatus: "INVALID",
+      stickyPaid: false,
+      wasAlreadyPaid: false,
+      isNowPaid: false,
+      justBecamePaid: false,
+      amountExpected: 120000,
+      amountReceived: 120000,
+      currency: "UGX",
+      providerTrackingId: pendingOrder.order_tracking_id,
+      merchantReference: pendingOrder.id,
+      paymentReference: null,
+      updated: true,
+      orderSnapshot: {
+        orderId: pendingOrder.id,
+        customerName: pendingOrder.customer_name,
+        orderStatus: "Pending Payment",
+        totalUGX: pendingOrder.total_ugx,
+        paymentStatus: "pending",
+        viewState: "pending",
+        verified: false,
+        items: [],
+      },
+      message: "Payment is still pending.",
+    });
+    const getLatestOrder = vi.fn().mockResolvedValue(latestOrder);
+    const cancelOrder = vi.fn();
+
+    const { reconcileDuePendingTrackedPayments } = await import("@/lib/payments/order-payments");
+    const stats = await reconcileDuePendingTrackedPayments("test_recovery", {
+      now: new Date("2026-04-07T09:20:00.000Z"),
+      listOrders: vi.fn().mockResolvedValue([pendingOrder]),
+      verifyOrder,
+      getLatestOrder,
+      cancelOrder,
+    });
+
+    expect(verifyOrder).toHaveBeenCalledTimes(1);
+    expect(cancelOrder).not.toHaveBeenCalled();
+    expect(stats).toEqual(
+      expect.objectContaining({
+        verified: 1,
+        cancelled: 0,
+        errors: 0,
+      }),
+    );
+  });
+
   it("soft-cancels stale tracked pending orders when reverify still reports pending", async () => {
     const pendingOrder = createOrderRow({
       id: "stale-pending-order",
@@ -606,6 +670,50 @@ describe("payment sync regression tests", () => {
         verified: 1,
         cancelled: 1,
         errors: 0,
+      }),
+    );
+  });
+
+  it("keeps INVALID Pesapal verification results pending instead of cancelling immediately", async () => {
+    const orderRow = createOrderRow({
+      payment_status: "pending",
+      status: "Pending Payment",
+      order_status: "pending_payment",
+    });
+    const verifiedAt = new Date().toISOString();
+    const supabase = buildSupabaseHarness(orderRow);
+
+    getSupabaseServerClientMock.mockReturnValue(supabase.client);
+    getPaymentGatewayMock.mockReturnValue({
+      verifyPayment: vi.fn().mockResolvedValue({
+        provider: "pesapal",
+        providerReference: "tracking-123",
+        paymentStatus: "pending",
+        providerStatus: "INVALID",
+        paymentReference: null,
+        amount: 120000,
+        currency: "UGX",
+        rawResponse: { payment_status_description: "INVALID" },
+        verifiedAt,
+      }),
+    });
+
+    const { verifyOrderPaymentAuthority } = await import("@/lib/payments/order-payments");
+    const result = await verifyOrderPaymentAuthority(orderRow.id, {
+      orderTrackingId: "tracking-123",
+      source: "status",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.verificationState).toBe("pending");
+    expect(result.providerStatus).toBe("INVALID");
+    expect(result.orderSnapshot.paymentStatus).toBe("pending");
+    expect(result.message).toBe("Payment is still pending.");
+    expect(supabase.getOrderRow()).toEqual(
+      expect.objectContaining({
+        status: "Pending Payment",
+        order_status: "pending_payment",
+        payment_status: "pending",
       }),
     );
   });

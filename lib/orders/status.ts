@@ -30,7 +30,6 @@ export function normalizePaymentStatusValue(
   if (
     normalized === "cancelled"
     || normalized === "canceled"
-    || normalized === "invalid"
   ) {
     return "cancelled";
   }

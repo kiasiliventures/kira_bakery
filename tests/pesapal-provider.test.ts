@@ -214,4 +214,10 @@ describe("Pesapal provider", () => {
       }),
     );
   });
+
+  it("treats Pesapal INVALID as pending until the soft-cancel window expires", async () => {
+    const { normalizePesapalPaymentState } = await import("@/lib/payments/providers/pesapal");
+
+    expect(normalizePesapalPaymentState("INVALID")).toBe("pending");
+  });
 });

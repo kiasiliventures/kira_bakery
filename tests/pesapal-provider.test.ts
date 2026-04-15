@@ -15,6 +15,7 @@ function setRequiredPesapalEnv(overrides?: Partial<NodeJS.ProcessEnv>) {
   process.env.PESAPAL_BASE_URL = overrides?.PESAPAL_BASE_URL ?? "https://pay.pesapal.com/v3";
   process.env.PESAPAL_CONSUMER_KEY = overrides?.PESAPAL_CONSUMER_KEY ?? "consumer-key";
   process.env.PESAPAL_CONSUMER_SECRET = overrides?.PESAPAL_CONSUMER_SECRET ?? "consumer-secret";
+  process.env.PESAPAL_FORCE_INIT_REJECTION = overrides?.PESAPAL_FORCE_INIT_REJECTION ?? "";
 
   if (overrides && "PESAPAL_CALLBACK_URL" in overrides) {
     process.env.PESAPAL_CALLBACK_URL = overrides.PESAPAL_CALLBACK_URL;
@@ -58,7 +59,7 @@ describe("Pesapal provider", () => {
         email: "jane@example.com",
         requestOrigin: "http://localhost:3000",
       }),
-    ).rejects.toThrow(/PESAPAL_IPN_URL.*public URL/i);
+    ).rejects.toThrow(/PESAPAL_(CALLBACK|IPN)_URL.*public URL/i);
 
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -219,5 +220,42 @@ describe("Pesapal provider", () => {
     const { normalizePesapalPaymentState } = await import("@/lib/payments/providers/pesapal");
 
     expect(normalizePesapalPaymentState("INVALID")).toBe("pending");
+  });
+
+  it("supports a forced explicit initiation rejection toggle for preview testing", async () => {
+    setRequiredPesapalEnv({
+      PESAPAL_CALLBACK_URL: "https://kira-bakery.example.com/payment/result",
+      PESAPAL_IPN_URL: "https://kira-bakery.example.com/api/payments/pesapal/ipn",
+      PESAPAL_FORCE_INIT_REJECTION: "1",
+    });
+
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { submitPesapalOrderRequest, isPesapalInitiationRejectedError } =
+      await import("@/lib/payments/providers/pesapal");
+
+    await expect(
+      submitPesapalOrderRequest({
+        orderId: "order-123",
+        amountUGX: 12000,
+        description: "Kira Bakery order order-123",
+        customerName: "Jane Doe",
+        phone: "+256700000000",
+        email: "jane@example.com",
+        requestOrigin: "https://kira-bakery.example.com",
+      }),
+    ).rejects.toSatisfy((error: unknown) => {
+      expect(isPesapalInitiationRejectedError(error)).toBe(true);
+      expect(error).toMatchObject({
+        code: "forced_preview_rejection",
+        providerStatus: "REJECTED",
+        providerReference: null,
+        redirectUrl: null,
+      });
+      return true;
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

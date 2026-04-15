@@ -33,6 +33,20 @@ const sizeId = "1b0ef9da-37d1-46d4-b394-4512dd0327d7";
 const tierOptionId = "bc30d702-2f09-4952-ac8d-a84a69c13bc2";
 const toppingId = "4cd31977-cd5c-4956-b1e5-551cc1f55af5";
 const requestId = "66a0eb48-4457-4d56-ac3a-7b9fb9967fef";
+const validPngBytes = Uint8Array.from([
+  0x89,
+  0x50,
+  0x4e,
+  0x47,
+  0x0d,
+  0x0a,
+  0x1a,
+  0x0a,
+]);
+
+function createReferenceImageFile() {
+  return new File([validPngBytes], "My Cake Design.png", { type: "image/png" });
+}
 
 function createValidFormData() {
   const formData = new FormData();
@@ -145,10 +159,7 @@ describe("cake custom request route", () => {
     const nowSpy = vi.spyOn(Date, "now").mockReturnValue(1710000000000);
     const { POST } = await import("@/app/api/cakes/custom-request/route");
     const formData = createValidFormData();
-    formData.set(
-      "referenceImage",
-      new File(["image-binary"], "My Cake Design.png", { type: "image/png" }),
-    );
+    formData.set("referenceImage", createReferenceImageFile());
 
     const response = await POST(
       new Request("https://example.com/api/cakes/custom-request", {
@@ -161,7 +172,11 @@ describe("cake custom request route", () => {
     expect(fromMock).toHaveBeenCalledWith("cake-reference-images");
     expect(uploadMock).toHaveBeenCalledWith(
       "cake-requests/66a0eb48-4457-4d56-ac3a-7b9fb9967fef/1710000000000-my-cake-design.png",
-      expect.any(Buffer),
+      expect.objectContaining({
+        name: "My Cake Design.png",
+        size: validPngBytes.byteLength,
+        type: "image/png",
+      }),
       expect.objectContaining({
         contentType: "image/png",
       }),
@@ -174,7 +189,7 @@ describe("cake custom request route", () => {
           path: "cake-requests/66a0eb48-4457-4d56-ac3a-7b9fb9967fef/1710000000000-my-cake-design.png",
           originalFilename: "My Cake Design.png",
           contentType: "image/png",
-          sizeBytes: 12,
+          sizeBytes: validPngBytes.byteLength,
         },
       }),
     );
@@ -230,10 +245,7 @@ describe("cake custom request route", () => {
     createCakeCustomRequestMock.mockRejectedValue(new Error("db insert failed"));
     const { POST } = await import("@/app/api/cakes/custom-request/route");
     const formData = createValidFormData();
-    formData.set(
-      "referenceImage",
-      new File(["image-binary"], "My Cake Design.png", { type: "image/png" }),
-    );
+    formData.set("referenceImage", createReferenceImageFile());
 
     const response = await POST(
       new Request("https://example.com/api/cakes/custom-request", {

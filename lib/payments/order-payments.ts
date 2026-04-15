@@ -15,6 +15,7 @@ import {
   type PaymentStatus,
   type PaymentSyncSource,
 } from "@/lib/payments/gateway";
+import { isPesapalInitiationRejectedError } from "@/lib/payments/providers/pesapal";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 type OrderPaymentRow = {
@@ -41,6 +42,7 @@ type OrderPaymentRow = {
   payment_last_verified_at: string | null;
   paid_at: string | null;
   order_tracking_id: string | null;
+  active_payment_attempt_id: string | null;
   fulfillment_review_required: boolean | null;
   fulfillment_review_reason: string | null;
   inventory_conflict: boolean | null;
@@ -67,17 +69,64 @@ type OrderPaymentItemRow = {
   selected_flavor: string | null;
 };
 
+type PaymentAttemptLifecycleStatus = "initiating" | "initiated" | "rejected" | "failed";
+
+type PaymentAttemptRow = {
+  id: string;
+  local_attempt_id: string;
+  order_id: string;
+  provider: string;
+  provider_reference: string | null;
+  merchant_reference: string;
+  amount: number;
+  currency: string;
+  status: PaymentAttemptLifecycleStatus;
+  redirect_url: string | null;
+  raw_request_payload: unknown | null;
+  raw_provider_response: unknown | null;
+  provider_request_started_at: string | null;
+  response_received_at: string | null;
+  failure_code: string | null;
+  failure_message: string | null;
+  failure_phase: string | null;
+  attempt_number: number;
+  verified_payment_status: string | null;
+  last_verification_response: unknown | null;
+  created_at: string;
+  updated_at: string;
+  verified_at: string | null;
+};
+
 type PaymentAttemptRecordInput = {
   orderId: string;
   provider: PaymentProviderName;
   providerReference: string;
+  merchantReference?: string;
   amount: number;
   currency: string;
-  status: PaymentStatus;
+  status?: PaymentAttemptLifecycleStatus;
+  verifiedPaymentStatus?: PaymentStatus | null;
   redirectUrl?: string | null;
+  rawRequestPayload?: unknown;
   rawProviderResponse?: unknown;
+  lastVerificationResponse?: unknown;
+  providerRequestStartedAt?: string | null;
+  responseReceivedAt?: string | null;
+  failureCode?: string | null;
+  failureMessage?: string | null;
+  failurePhase?: string | null;
+  attemptNumber?: number;
   createdAt?: string;
   verifiedAt?: string | null;
+};
+
+type InsertInitiatingPaymentAttemptInput = {
+  orderId: string;
+  provider: PaymentProviderName;
+  merchantReference: string;
+  amount: number;
+  currency: string;
+  rawRequestPayload?: unknown;
 };
 
 type InventoryDeductionAttemptResult = {
@@ -225,6 +274,7 @@ const ORDER_PAYMENT_SELECTION = [
   "payment_last_verified_at",
   "paid_at",
   "order_tracking_id",
+  "active_payment_attempt_id",
   "fulfillment_review_required",
   "fulfillment_review_reason",
   "inventory_conflict",
@@ -241,6 +291,31 @@ const ORDER_PAYMENT_SELECTION = [
   "created_at",
   "updated_at",
   "order_items(name,price_ugx,quantity,selected_size,selected_flavor)",
+].join(",");
+const PAYMENT_ATTEMPT_SELECTION = [
+  "id",
+  "local_attempt_id",
+  "order_id",
+  "provider",
+  "provider_reference",
+  "merchant_reference",
+  "amount",
+  "currency",
+  "status",
+  "redirect_url",
+  "raw_request_payload",
+  "raw_provider_response",
+  "provider_request_started_at",
+  "response_received_at",
+  "failure_code",
+  "failure_message",
+  "failure_phase",
+  "attempt_number",
+  "verified_payment_status",
+  "last_verification_response",
+  "created_at",
+  "updated_at",
+  "verified_at",
 ].join(",");
 const NOT_ALREADY_PAID_FILTER = [
   "payment_status.is.null",
@@ -316,6 +391,95 @@ async function getOrderPaymentRow(orderId: string): Promise<OrderPaymentRow | nu
   }
 
   return (data as OrderPaymentRow | null) ?? null;
+}
+
+function normalizeAttemptLifecycleStatus(
+  value: string | null | undefined,
+): PaymentAttemptLifecycleStatus | null {
+  const normalized = value?.trim().toLowerCase();
+  if (
+    normalized === "initiating"
+    || normalized === "initiated"
+    || normalized === "rejected"
+    || normalized === "failed"
+  ) {
+    return normalized;
+  }
+
+  return null;
+}
+
+async function getPaymentAttemptById(attemptId: string): Promise<PaymentAttemptRow | null> {
+  const supabase = getSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("payment_attempts")
+    .select(PAYMENT_ATTEMPT_SELECTION)
+    .eq("id", attemptId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("payment_attempt_lookup_failed", {
+      attemptId,
+      error: error.message,
+    });
+    throw new Error("Unable to load payment attempt.");
+  }
+
+  return (data as unknown as PaymentAttemptRow | null) ?? null;
+}
+
+async function getLatestPaymentAttemptForOrder(orderId: string): Promise<PaymentAttemptRow | null> {
+  const supabase = getSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("payment_attempts")
+    .select(PAYMENT_ATTEMPT_SELECTION)
+    .eq("order_id", orderId)
+    .order("attempt_number", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    console.error("payment_attempt_latest_lookup_failed", {
+      orderId,
+      error: error.message,
+    });
+    throw new Error("Unable to load payment attempts.");
+  }
+
+  return (data as unknown as PaymentAttemptRow | null) ?? null;
+}
+
+async function getLatestInitiatedAttemptForOrder(orderId: string): Promise<PaymentAttemptRow | null> {
+  const supabase = getSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("payment_attempts")
+    .select(PAYMENT_ATTEMPT_SELECTION)
+    .eq("order_id", orderId)
+    .eq("status", "initiated")
+    .order("attempt_number", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    console.error("payment_attempt_latest_initiated_lookup_failed", {
+      orderId,
+      error: error.message,
+    });
+    throw new Error("Unable to load initiated payment attempt.");
+  }
+
+  return (data as unknown as PaymentAttemptRow | null) ?? null;
+}
+
+async function setOrderActivePaymentAttempt(
+  orderId: string,
+  attemptId: string,
+): Promise<OrderPaymentRow | null> {
+  return updateOrderPaymentRow(orderId, {
+    active_payment_attempt_id: attemptId,
+  });
 }
 
 function buildSnapshot(
@@ -450,6 +614,7 @@ function hasCanonicalPaymentFieldsChanged(previous: OrderPaymentRow, next: Order
     || previous.payment_reference !== next.payment_reference
     || previous.paid_at !== next.paid_at
     || previous.order_tracking_id !== next.order_tracking_id
+    || previous.active_payment_attempt_id !== next.active_payment_attempt_id
   );
 }
 
@@ -463,27 +628,186 @@ function hasInventoryFulfillmentStateChanged(previous: OrderPaymentRow, next: Or
   );
 }
 
-async function upsertPaymentAttempt(input: PaymentAttemptRecordInput) {
+async function insertInitiatingPaymentAttemptWithNextNumber(
+  input: InsertInitiatingPaymentAttemptInput,
+): Promise<PaymentAttemptRow> {
   const supabase = getSupabaseServerClient();
-  const { error } = await supabase
+  const latestAttempt = await getLatestPaymentAttemptForOrder(input.orderId);
+  const nextAttemptNumber = (latestAttempt?.attempt_number ?? 0) + 1;
+  const { data, error } = await supabase
     .from("payment_attempts")
-    .upsert(
-      {
-        order_id: input.orderId,
-        provider: input.provider,
-        provider_reference: input.providerReference,
-        amount: input.amount,
-        currency: input.currency,
-        status: input.status,
-        redirect_url: input.redirectUrl ?? null,
-        raw_provider_response: input.rawProviderResponse ?? null,
-        created_at: input.createdAt,
-        verified_at: input.verifiedAt ?? null,
-      },
-      {
-        onConflict: "provider,provider_reference",
-      },
-    );
+    .insert({
+      order_id: input.orderId,
+      provider: input.provider,
+      merchant_reference: input.merchantReference,
+      amount: input.amount,
+      currency: input.currency,
+      status: "initiating",
+      raw_request_payload: input.rawRequestPayload ?? null,
+      attempt_number: nextAttemptNumber,
+    })
+    .select(PAYMENT_ATTEMPT_SELECTION)
+    .single();
+
+  if (error) {
+    console.error("payment_attempt_insert_failed", {
+      orderId: input.orderId,
+      provider: input.provider,
+      attemptNumber: nextAttemptNumber,
+      error: error.message,
+    });
+    throw new Error("Unable to create payment attempt.");
+  }
+
+  return data as unknown as PaymentAttemptRow;
+}
+
+async function updatePaymentAttempt(
+  attemptId: string,
+  values: Partial<PaymentAttemptRow>,
+): Promise<PaymentAttemptRow> {
+  const supabase = getSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("payment_attempts")
+    .update({
+      ...values,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", attemptId)
+    .select(PAYMENT_ATTEMPT_SELECTION)
+    .single();
+
+  if (error) {
+    console.error("payment_attempt_update_failed", {
+      attemptId,
+      error: error.message,
+    });
+    throw new Error("Unable to update payment attempt.");
+  }
+
+  return data as unknown as PaymentAttemptRow;
+}
+
+async function markPaymentAttemptProviderRequestStarted(attemptId: string): Promise<PaymentAttemptRow> {
+  return updatePaymentAttempt(attemptId, {
+    provider_request_started_at: new Date().toISOString(),
+  });
+}
+
+async function markPaymentAttemptInitiated(
+  attemptId: string,
+  input: {
+    providerReference: string;
+    redirectUrl: string | null;
+    paymentStatus: PaymentStatus;
+    rawProviderResponse: unknown;
+  },
+): Promise<PaymentAttemptRow> {
+  return updatePaymentAttempt(attemptId, {
+    provider_reference: input.providerReference,
+    redirect_url: input.redirectUrl,
+    status: "initiated",
+    raw_provider_response: input.rawProviderResponse,
+    response_received_at: new Date().toISOString(),
+    verified_payment_status: input.paymentStatus,
+    failure_code: null,
+    failure_message: null,
+    failure_phase: null,
+  });
+}
+
+async function markPaymentAttemptRejected(
+  attemptId: string,
+  error: {
+    code?: string | null;
+    providerMessage: string;
+    rawResponse?: unknown;
+  },
+): Promise<PaymentAttemptRow> {
+  return updatePaymentAttempt(attemptId, {
+    status: "rejected",
+    raw_provider_response: error.rawResponse ?? null,
+    response_received_at: new Date().toISOString(),
+    failure_code: error.code?.trim() || null,
+    failure_message: error.providerMessage,
+    failure_phase: "provider_rejected",
+    verified_payment_status: "cancelled",
+  });
+}
+
+async function markPaymentAttemptFailed(
+  attemptId: string,
+  input: {
+    error: unknown;
+    failurePhase: "pre_provider" | "post_provider_unknown";
+  },
+): Promise<PaymentAttemptRow> {
+  return updatePaymentAttempt(attemptId, {
+    status: "failed",
+    response_received_at: new Date().toISOString(),
+    failure_message: input.error instanceof Error ? input.error.message : "unknown_error",
+    failure_phase: input.failurePhase,
+  });
+}
+
+async function upsertPaymentAttempt(input: PaymentAttemptRecordInput): Promise<PaymentAttemptRow> {
+  const supabase = getSupabaseServerClient();
+  const payload: Record<string, unknown> = {
+    order_id: input.orderId,
+    provider: input.provider,
+    provider_reference: input.providerReference,
+    merchant_reference: input.merchantReference ?? input.orderId,
+    amount: input.amount,
+    currency: input.currency,
+    status: input.status ?? "initiated",
+    updated_at: new Date().toISOString(),
+  };
+
+  if (input.verifiedPaymentStatus !== undefined) {
+    payload.verified_payment_status = input.verifiedPaymentStatus;
+  }
+  if (input.redirectUrl !== undefined) {
+    payload.redirect_url = input.redirectUrl;
+  }
+  if (input.rawRequestPayload !== undefined) {
+    payload.raw_request_payload = input.rawRequestPayload;
+  }
+  if (input.rawProviderResponse !== undefined) {
+    payload.raw_provider_response = input.rawProviderResponse;
+  }
+  if (input.lastVerificationResponse !== undefined) {
+    payload.last_verification_response = input.lastVerificationResponse;
+  }
+  if (input.providerRequestStartedAt !== undefined) {
+    payload.provider_request_started_at = input.providerRequestStartedAt;
+  }
+  if (input.responseReceivedAt !== undefined) {
+    payload.response_received_at = input.responseReceivedAt;
+  }
+  if (input.failureCode !== undefined) {
+    payload.failure_code = input.failureCode?.trim() || null;
+  }
+  if (input.failureMessage !== undefined) {
+    payload.failure_message = input.failureMessage ?? null;
+  }
+  if (input.failurePhase !== undefined) {
+    payload.failure_phase = input.failurePhase ?? null;
+  }
+  if (input.attemptNumber !== undefined) {
+    payload.attempt_number = input.attemptNumber;
+  }
+  if (input.createdAt !== undefined) {
+    payload.created_at = input.createdAt;
+  }
+  if (input.verifiedAt !== undefined) {
+    payload.verified_at = input.verifiedAt ?? null;
+  }
+
+  const { data, error } = await supabase
+    .from("payment_attempts")
+    .upsert(payload, { onConflict: "provider,provider_reference" })
+    .select(PAYMENT_ATTEMPT_SELECTION)
+    .single();
 
   if (error) {
     console.error("payment_attempt_upsert_failed", {
@@ -494,6 +818,79 @@ async function upsertPaymentAttempt(input: PaymentAttemptRecordInput) {
     });
     throw new Error("Unable to persist payment attempt details.");
   }
+
+  return data as unknown as PaymentAttemptRow;
+}
+
+async function projectAttemptToOrder(attempt: PaymentAttemptRow): Promise<OrderPaymentRow | null> {
+  if (!attempt.provider_reference || !attempt.redirect_url) {
+    return getOrderPaymentRow(attempt.order_id);
+  }
+
+  return updateOrderPaymentRow(attempt.order_id, {
+    active_payment_attempt_id: attempt.id,
+    payment_provider: attempt.provider,
+    payment_status: attempt.verified_payment_status ?? "pending",
+    order_tracking_id: attempt.provider_reference,
+    payment_redirect_url: attempt.redirect_url,
+    payment_initiation_failure_code: null,
+    payment_initiation_failure_message: null,
+    payment_initiation_failed_at: null,
+  });
+}
+
+async function repairOrderProjectionFromAttempt(row: OrderPaymentRow): Promise<OrderPaymentRow> {
+  const activeAttempt =
+    row.active_payment_attempt_id
+      ? await getPaymentAttemptById(row.active_payment_attempt_id)
+      : await getLatestInitiatedAttemptForOrder(row.id);
+
+  if (!activeAttempt || activeAttempt.order_id !== row.id) {
+    return row;
+  }
+
+  const lifecycleStatus = normalizeAttemptLifecycleStatus(activeAttempt.status);
+  if (
+    lifecycleStatus === "initiated"
+    && activeAttempt.provider_reference
+    && activeAttempt.redirect_url
+    && (
+      !row.active_payment_attempt_id
+      || !row.order_tracking_id
+      || !row.payment_redirect_url
+      || !row.payment_provider
+    )
+  ) {
+    const repairedRow = await updateOrderPaymentRow(row.id, {
+      active_payment_attempt_id: row.active_payment_attempt_id ?? activeAttempt.id,
+      payment_provider: row.payment_provider ?? activeAttempt.provider,
+      order_tracking_id: row.order_tracking_id ?? activeAttempt.provider_reference,
+      payment_redirect_url: row.payment_redirect_url ?? activeAttempt.redirect_url,
+      payment_status: row.payment_status ?? activeAttempt.verified_payment_status ?? "pending",
+    });
+
+    if (repairedRow) {
+      return repairedRow;
+    }
+  }
+
+  if (
+    lifecycleStatus === "failed"
+    && row.payment_initiation_attempted_at
+    && !row.order_tracking_id
+    && !row.payment_redirect_url
+    && isPaymentInitiationLeaseExpired(row.payment_initiation_attempted_at)
+  ) {
+    const releasedRow = await releaseStaleOrderPaymentInitiation(
+      row.id,
+      row.payment_initiation_attempted_at,
+    );
+    if (releasedRow) {
+      return releasedRow;
+    }
+  }
+
+  return row;
 }
 
 function buildOrderDescription(orderId: string) {
@@ -991,9 +1388,10 @@ export async function initiateOrderPaymentForOrder(
     assertOrderAccess(row, options.accessToken);
   }
 
+  row = await repairOrderProjectionFromAttempt(row);
   const providerName = resolveConfiguredProviderForInitiation(row);
   const gateway = getPaymentGateway(providerName);
-  const storedPaymentStatus = normalizeStoredPaymentStatus(row.payment_status);
+  let storedPaymentStatus = normalizeStoredPaymentStatus(row.payment_status);
 
   console.info("PAYMENT_INIT_ATTEMPT", {
     orderId,
@@ -1018,13 +1416,15 @@ export async function initiateOrderPaymentForOrder(
   }
 
   if (row.order_tracking_id && row.payment_redirect_url) {
-    await upsertPaymentAttempt({
+    const existingAttempt = await upsertPaymentAttempt({
       orderId: row.id,
       provider: providerName,
       providerReference: row.order_tracking_id,
+      merchantReference: row.id,
       amount: row.total_ugx,
       currency: "UGX",
-      status: storedPaymentStatus,
+      status: "initiated",
+      verifiedPaymentStatus: storedPaymentStatus,
       redirectUrl: row.payment_redirect_url,
       rawProviderResponse: {
         reusedExistingAttempt: true,
@@ -1033,6 +1433,9 @@ export async function initiateOrderPaymentForOrder(
       createdAt: row.created_at,
       verifiedAt: row.paid_at,
     });
+    if (row.active_payment_attempt_id !== existingAttempt.id) {
+      row = (await setOrderActivePaymentAttempt(row.id, existingAttempt.id)) ?? row;
+    }
 
     console.info("order_payment_initiate_reuse", {
       orderId,
@@ -1049,7 +1452,7 @@ export async function initiateOrderPaymentForOrder(
     });
     return {
       orderId,
-      redirectUrl: row.payment_redirect_url,
+      redirectUrl: row.payment_redirect_url!,
       paymentStatus: storedPaymentStatus,
     };
   }
@@ -1069,14 +1472,16 @@ export async function initiateOrderPaymentForOrder(
         orderId,
         attemptedAt: row.payment_initiation_attempted_at,
       });
-      row = releasedRow;
+      row = await repairOrderProjectionFromAttempt(releasedRow);
+      storedPaymentStatus = normalizeStoredPaymentStatus(row.payment_status);
     } else {
       const latestRow = await getOrderPaymentRow(orderId);
       if (!latestRow) {
         throw new Error("Order not found.");
       }
+      const repairedLatestRow = await repairOrderProjectionFromAttempt(latestRow);
 
-      const latestPaymentStatus = normalizeStoredPaymentStatus(latestRow.payment_status);
+      const latestPaymentStatus = normalizeStoredPaymentStatus(repairedLatestRow.payment_status);
       if (latestPaymentStatus === "paid") {
         throw new Error("Order has already been paid.");
       }
@@ -1085,35 +1490,41 @@ export async function initiateOrderPaymentForOrder(
         throw new Error("Order payment has been cancelled.");
       }
 
-      if (latestRow.order_tracking_id && latestRow.payment_redirect_url) {
-        await upsertPaymentAttempt({
-          orderId: latestRow.id,
+      if (repairedLatestRow.order_tracking_id && repairedLatestRow.payment_redirect_url) {
+        const existingAttempt = await upsertPaymentAttempt({
+          orderId: repairedLatestRow.id,
           provider: providerName,
-          providerReference: latestRow.order_tracking_id,
-          amount: latestRow.total_ugx,
+          providerReference: repairedLatestRow.order_tracking_id,
+          merchantReference: repairedLatestRow.id,
+          amount: repairedLatestRow.total_ugx,
           currency: "UGX",
-          status: latestPaymentStatus,
-          redirectUrl: latestRow.payment_redirect_url,
+          status: "initiated",
+          verifiedPaymentStatus: latestPaymentStatus,
+          redirectUrl: repairedLatestRow.payment_redirect_url,
           rawProviderResponse: {
             reusedExistingAttemptAfterStaleClaimReleaseMiss: true,
-            paymentReference: latestRow.payment_reference,
+            paymentReference: repairedLatestRow.payment_reference,
           },
-          createdAt: latestRow.created_at,
-          verifiedAt: latestRow.paid_at,
+          createdAt: repairedLatestRow.created_at,
+          verifiedAt: repairedLatestRow.paid_at,
         });
+        if (repairedLatestRow.active_payment_attempt_id !== existingAttempt.id) {
+          await setOrderActivePaymentAttempt(repairedLatestRow.id, existingAttempt.id);
+        }
 
         return {
           orderId,
-          redirectUrl: latestRow.payment_redirect_url,
+          redirectUrl: repairedLatestRow.payment_redirect_url!,
           paymentStatus: latestPaymentStatus,
         };
       }
 
-      if (latestRow.payment_initiation_attempted_at) {
+      if (repairedLatestRow.payment_initiation_attempted_at) {
         throw new Error(PAYMENT_INITIATION_PENDING_VERIFICATION_ERROR);
       }
 
-      row = latestRow;
+      row = repairedLatestRow;
+      storedPaymentStatus = latestPaymentStatus;
     }
   }
 
@@ -1123,8 +1534,9 @@ export async function initiateOrderPaymentForOrder(
     if (!latestRow) {
       throw new Error("Order not found.");
     }
+    const repairedLatestRow = await repairOrderProjectionFromAttempt(latestRow);
 
-    const latestPaymentStatus = normalizeStoredPaymentStatus(latestRow.payment_status);
+    const latestPaymentStatus = normalizeStoredPaymentStatus(repairedLatestRow.payment_status);
     if (latestPaymentStatus === "paid") {
       throw new Error("Order has already been paid.");
     }
@@ -1133,26 +1545,31 @@ export async function initiateOrderPaymentForOrder(
       throw new Error("Order payment has been cancelled.");
     }
 
-    if (latestRow.order_tracking_id && latestRow.payment_redirect_url) {
-      await upsertPaymentAttempt({
-        orderId: latestRow.id,
+    if (repairedLatestRow.order_tracking_id && repairedLatestRow.payment_redirect_url) {
+      const existingAttempt = await upsertPaymentAttempt({
+        orderId: repairedLatestRow.id,
         provider: providerName,
-        providerReference: latestRow.order_tracking_id,
-        amount: latestRow.total_ugx,
+        providerReference: repairedLatestRow.order_tracking_id,
+        merchantReference: repairedLatestRow.id,
+        amount: repairedLatestRow.total_ugx,
         currency: "UGX",
-        status: latestPaymentStatus,
-        redirectUrl: latestRow.payment_redirect_url,
+        status: "initiated",
+        verifiedPaymentStatus: latestPaymentStatus,
+        redirectUrl: repairedLatestRow.payment_redirect_url,
         rawProviderResponse: {
           reusedExistingAttemptAfterClaimMiss: true,
-          paymentReference: latestRow.payment_reference,
+          paymentReference: repairedLatestRow.payment_reference,
         },
-        createdAt: latestRow.created_at,
-        verifiedAt: latestRow.paid_at,
+        createdAt: repairedLatestRow.created_at,
+        verifiedAt: repairedLatestRow.paid_at,
       });
+      if (repairedLatestRow.active_payment_attempt_id !== existingAttempt.id) {
+        await setOrderActivePaymentAttempt(repairedLatestRow.id, existingAttempt.id);
+      }
 
       return {
         orderId,
-        redirectUrl: latestRow.payment_redirect_url,
+        redirectUrl: repairedLatestRow.payment_redirect_url!,
         paymentStatus: latestPaymentStatus,
       };
     }
@@ -1160,8 +1577,7 @@ export async function initiateOrderPaymentForOrder(
     throw new Error(PAYMENT_INITIATION_PENDING_VERIFICATION_ERROR);
   }
 
-  const providerInitiationStartedAt = performance.now();
-  const response = await gateway.initiatePayment({
+  const requestPayload = {
     orderId: row.id,
     amount: row.total_ugx,
     currency: "UGX",
@@ -1174,48 +1590,79 @@ export async function initiateOrderPaymentForOrder(
     phone: row.customer_phone ?? row.phone,
     email: row.customer_email ?? row.email,
     requestOrigin: options?.requestOrigin,
-  });
-  const providerInitiationDurationMs = Math.round((performance.now() - providerInitiationStartedAt) * 100) / 100;
+  };
 
-  console.info("order_payment_initiate_update", {
-    orderId,
-    provider: providerName,
-    providerReference: response.providerReference,
-    durationMs: providerInitiationDurationMs,
-  });
-
-  await updateOrderPaymentRow(orderId, {
-    payment_provider: providerName,
-    payment_status: response.paymentStatus,
-    order_tracking_id: response.providerReference,
-    payment_redirect_url: response.redirectUrl,
-    payment_initiation_failure_code: null,
-    payment_initiation_failure_message: null,
-    payment_initiation_failed_at: null,
-    payment_initiation_attempted_at: claimedRow.payment_initiation_attempted_at,
-  });
-
-  await upsertPaymentAttempt({
+  const initiatingAttempt = await insertInitiatingPaymentAttemptWithNextNumber({
     orderId: row.id,
     provider: providerName,
-    providerReference: response.providerReference,
+    merchantReference: row.id,
     amount: row.total_ugx,
     currency: "UGX",
-    status: response.paymentStatus,
-    redirectUrl: response.redirectUrl,
-    rawProviderResponse: response.rawResponse,
-    createdAt: row.created_at,
+    rawRequestPayload: requestPayload,
   });
+  row = (await setOrderActivePaymentAttempt(row.id, initiatingAttempt.id)) ?? row;
 
-  if (!response.redirectUrl) {
-    throw new Error("Payment provider did not return a redirect URL.");
+  let providerRequestStarted = false;
+
+  try {
+    await markPaymentAttemptProviderRequestStarted(initiatingAttempt.id);
+    providerRequestStarted = true;
+
+    const providerInitiationStartedAt = performance.now();
+    const response = await gateway.initiatePayment(requestPayload);
+    const providerInitiationDurationMs = Math.round((performance.now() - providerInitiationStartedAt) * 100) / 100;
+
+    console.info("order_payment_initiate_update", {
+      orderId,
+      provider: providerName,
+      providerReference: response.providerReference,
+      durationMs: providerInitiationDurationMs,
+    });
+
+    const initiatedAttempt = await markPaymentAttemptInitiated(initiatingAttempt.id, {
+      providerReference: response.providerReference,
+      redirectUrl: response.redirectUrl,
+      paymentStatus: response.paymentStatus,
+      rawProviderResponse: response.rawResponse,
+    });
+
+    const projectedRow = await projectAttemptToOrder(initiatedAttempt);
+    if (projectedRow) {
+      row = projectedRow;
+    }
+
+    if (!response.redirectUrl) {
+      throw new Error("Payment provider did not return a redirect URL.");
+    }
+
+    return {
+      orderId,
+      redirectUrl: response.redirectUrl,
+      paymentStatus: response.paymentStatus,
+    };
+  } catch (error) {
+    if (isPesapalInitiationRejectedError(error)) {
+      await markPaymentAttemptRejected(initiatingAttempt.id, {
+        code: error.code,
+        providerMessage: error.providerMessage,
+        rawResponse: error.rawResponse,
+      });
+      throw error;
+    }
+
+    await markPaymentAttemptFailed(initiatingAttempt.id, {
+      error,
+      failurePhase: providerRequestStarted ? "post_provider_unknown" : "pre_provider",
+    });
+
+    await updateOrderPaymentRow(orderId, {
+      active_payment_attempt_id: initiatingAttempt.id,
+      payment_provider: providerName,
+      payment_initiation_attempted_at: claimedRow.payment_initiation_attempted_at,
+    });
+
+    throw error;
   }
-
-  return {
-    orderId,
-    redirectUrl: response.redirectUrl,
-    paymentStatus: response.paymentStatus,
-  };
 }
 
 export async function verifyOrderPaymentAuthority(
@@ -1231,10 +1678,11 @@ export async function verifyOrderPaymentAuthority(
     throw new Error("Merchant reference does not match the order.");
   }
 
-  const row = await getOrderPaymentRow(orderId);
-  if (!row) {
+  const storedRow = await getOrderPaymentRow(orderId);
+  if (!storedRow) {
     throw new Error("Order not found.");
   }
+  const row = await repairOrderProjectionFromAttempt(storedRow);
 
   const providerName = resolveProviderForVerification(row);
   const gateway = getPaymentGateway(providerName);
@@ -1340,15 +1788,17 @@ export async function verifyOrderPaymentAuthority(
       providerStatus: status.providerStatus,
     });
 
-    await upsertPaymentAttempt({
+    const mismatchAttempt = await upsertPaymentAttempt({
       orderId: row.id,
       provider: status.provider,
       providerReference: status.providerReference,
+      merchantReference: row.id,
       amount: receivedAmount ?? expectedAmount,
       currency,
-      status: storedPaymentStatus === "paid" ? storedPaymentStatus : "pending",
+      status: "initiated",
+      verifiedPaymentStatus: storedPaymentStatus === "paid" ? storedPaymentStatus : "pending",
       redirectUrl: row.payment_redirect_url,
-      rawProviderResponse: {
+      lastVerificationResponse: {
         verificationRejected: "amount_mismatch",
         expectedAmount,
         receivedAmount,
@@ -1358,6 +1808,9 @@ export async function verifyOrderPaymentAuthority(
       createdAt: row.created_at,
       verifiedAt: row.paid_at ?? status.verifiedAt,
     });
+    if (row.active_payment_attempt_id !== mismatchAttempt.id) {
+      await setOrderActivePaymentAttempt(row.id, mismatchAttempt.id);
+    }
 
     await updateOrderPaymentRow(row.id, {
       payment_last_verified_at: status.verifiedAt,
@@ -1390,18 +1843,23 @@ export async function verifyOrderPaymentAuthority(
   let updated = persisted.updated;
   let finalPaymentStatus = normalizeStoredPaymentStatus(finalRow.payment_status);
 
-  await upsertPaymentAttempt({
+  const verifiedAttempt = await upsertPaymentAttempt({
     orderId: finalRow.id,
     provider: status.provider,
     providerReference: status.providerReference,
+    merchantReference: finalRow.id,
     amount: receivedAmount ?? expectedAmount,
     currency,
-    status: finalPaymentStatus,
+    status: "initiated",
+    verifiedPaymentStatus: finalPaymentStatus,
     redirectUrl: finalRow.payment_redirect_url,
-    rawProviderResponse: status.rawResponse,
+    lastVerificationResponse: status.rawResponse,
     createdAt: finalRow.created_at,
     verifiedAt: finalRow.paid_at ?? status.verifiedAt,
   });
+  if (finalRow.active_payment_attempt_id !== verifiedAttempt.id) {
+    finalRow = (await setOrderActivePaymentAttempt(finalRow.id, verifiedAttempt.id)) ?? finalRow;
+  }
 
   if (finalPaymentStatus === "paid" && shouldAttemptPaidOrderInventoryDeduction(finalRow)) {
     try {
@@ -1541,10 +1999,11 @@ export async function getOrderPaymentSnapshot(
     requireAccessToken?: boolean;
   },
 ): Promise<OrderPaymentSnapshot> {
-  const row = await getOrderPaymentRow(orderId);
-  if (!row) {
+  const storedRow = await getOrderPaymentRow(orderId);
+  if (!storedRow) {
     throw new Error("Order not found.");
   }
+  const row = await repairOrderProjectionFromAttempt(storedRow);
 
   if (options?.requireAccessToken) {
     assertOrderAccess(row, options.accessToken);
@@ -1583,10 +2042,11 @@ export async function getOrderDetailSnapshot(
     requireAuthorization?: boolean;
   },
 ): Promise<OrderDetailSnapshot> {
-  const row = await getOrderPaymentRow(orderId);
-  if (!row) {
+  const storedRow = await getOrderPaymentRow(orderId);
+  if (!storedRow) {
     throw new Error("Order not found.");
   }
+  const row = await repairOrderProjectionFromAttempt(storedRow);
 
   if (options?.requireAuthorization) {
     assertOrderReadAccess(row, {

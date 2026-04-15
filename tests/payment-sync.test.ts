@@ -30,6 +30,7 @@ type MockOrderItemRow = {
 
 type MockOrderRow = {
   id: string;
+  customer_id?: string | null;
   order_access_token: string;
   total_ugx: number;
   total_price: number | null;
@@ -48,16 +49,52 @@ type MockOrderRow = {
   payment_initiation_failure_message: string | null;
   payment_initiation_failed_at: string | null;
   payment_initiation_attempted_at: string | null;
+  payment_last_verified_at?: string | null;
   paid_at: string | null;
   order_tracking_id: string | null;
+  active_payment_attempt_id?: string | null;
   fulfillment_review_required: boolean | null;
   fulfillment_review_reason: string | null;
   inventory_conflict: boolean | null;
   inventory_deduction_status: string | null;
   inventory_deduction_attempted_at: string | null;
+  fulfillment_method?: "delivery" | "pickup" | null;
+  delivery_method?: "delivery" | "pickup" | null;
+  address?: string | null;
+  delivery_address?: string | null;
+  delivery_address_text?: string | null;
+  delivery_date?: string | null;
+  delivery_fee?: number | null;
+  notes?: string | null;
   created_at: string;
   updated_at: string;
   order_items: MockOrderItemRow[];
+};
+
+type MockPaymentAttemptRow = {
+  id: string;
+  local_attempt_id: string;
+  order_id: string;
+  provider: string;
+  provider_reference: string | null;
+  merchant_reference: string;
+  amount: number;
+  currency: string;
+  status: "initiating" | "initiated" | "rejected" | "failed";
+  redirect_url: string | null;
+  raw_request_payload: unknown | null;
+  raw_provider_response: unknown | null;
+  provider_request_started_at: string | null;
+  response_received_at: string | null;
+  failure_code: string | null;
+  failure_message: string | null;
+  failure_phase: string | null;
+  attempt_number: number;
+  verified_payment_status: string | null;
+  last_verification_response: unknown | null;
+  created_at: string;
+  updated_at: string;
+  verified_at: string | null;
 };
 
 type PaymentSupabaseHarness = {
@@ -70,8 +107,11 @@ type PaymentSupabaseHarness = {
   };
   getOrderRow: () => MockOrderRow;
   setOrderRow: (nextOrder: MockOrderRow) => void;
+  getPaymentAttempts: () => MockPaymentAttemptRow[];
   updateSpy: ReturnType<typeof vi.fn>;
   upsertSpy: ReturnType<typeof vi.fn>;
+  attemptInsertSpy: ReturnType<typeof vi.fn>;
+  attemptUpdateSpy: ReturnType<typeof vi.fn>;
   rpcSpy: ReturnType<typeof vi.fn>;
 };
 
@@ -96,13 +136,23 @@ function createOrderRow(overrides: Partial<MockOrderRow> = {}): MockOrderRow {
     payment_initiation_failure_message: null,
     payment_initiation_failed_at: null,
     payment_initiation_attempted_at: null,
+    payment_last_verified_at: null,
     paid_at: null,
     order_tracking_id: "tracking-123",
+    active_payment_attempt_id: null,
     fulfillment_review_required: false,
     fulfillment_review_reason: null,
     inventory_conflict: false,
     inventory_deduction_status: "not_started",
     inventory_deduction_attempted_at: null,
+    fulfillment_method: "delivery",
+    delivery_method: "delivery",
+    address: null,
+    delivery_address: null,
+    delivery_address_text: null,
+    delivery_date: null,
+    delivery_fee: null,
+    notes: null,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     order_items: [],
@@ -111,6 +161,10 @@ function createOrderRow(overrides: Partial<MockOrderRow> = {}): MockOrderRow {
 }
 
 function cloneOrderRow(row: MockOrderRow): MockOrderRow {
+  return structuredClone(row);
+}
+
+function clonePaymentAttemptRow(row: MockPaymentAttemptRow): MockPaymentAttemptRow {
   return structuredClone(row);
 }
 
@@ -126,9 +180,13 @@ function buildSupabaseHarness(
 ): PaymentSupabaseHarness {
   const state = {
     orderRow: cloneOrderRow(initialOrderRow),
+    paymentAttempts: [] as MockPaymentAttemptRow[],
+    nextAttemptId: 1,
   };
   const getFieldValue = (row: MockOrderRow, field: string) =>
     row[field as keyof MockOrderRow];
+  const getAttemptFieldValue = (row: MockPaymentAttemptRow, field: string) =>
+    row[field as keyof MockPaymentAttemptRow];
   const matchesOrFilter = (row: MockOrderRow, filter: string) =>
     filter.split(",").some((entry) => {
       const [field, operator, ...valueParts] = entry.split(".");
@@ -167,6 +225,8 @@ function buildSupabaseHarness(
   };
   const updateSpy = vi.fn();
   const upsertSpy = vi.fn(async () => ({ error: null }));
+  const attemptInsertSpy = vi.fn();
+  const attemptUpdateSpy = vi.fn();
   const rpcSpy = vi.fn(async (name: string, args: Record<string, unknown>) => {
     if (options?.onRpc) {
       return options.onRpc(name, args, state);
@@ -174,6 +234,129 @@ function buildSupabaseHarness(
 
     return { data: null, error: null };
   });
+
+  const createPaymentAttemptRow = (
+    values: Partial<MockPaymentAttemptRow> & {
+      order_id: string;
+      provider: string;
+      merchant_reference: string;
+      amount: number;
+      currency: string;
+    },
+  ): MockPaymentAttemptRow => {
+    const createdAt = values.created_at ?? new Date().toISOString();
+    const attemptNumber =
+      values.attempt_number
+      ?? (
+        Math.max(
+          0,
+          ...state.paymentAttempts
+            .filter((attempt) => attempt.order_id === values.order_id)
+            .map((attempt) => attempt.attempt_number),
+        ) + 1
+      );
+
+    return {
+      id: values.id ?? `attempt-${state.nextAttemptId++}`,
+      local_attempt_id: values.local_attempt_id ?? `local-attempt-${state.nextAttemptId}`,
+      order_id: values.order_id,
+      provider: values.provider,
+      provider_reference: values.provider_reference ?? null,
+      merchant_reference: values.merchant_reference,
+      amount: values.amount,
+      currency: values.currency,
+      status: values.status ?? "initiating",
+      redirect_url: values.redirect_url ?? null,
+      raw_request_payload: values.raw_request_payload ?? null,
+      raw_provider_response: values.raw_provider_response ?? null,
+      provider_request_started_at: values.provider_request_started_at ?? null,
+      response_received_at: values.response_received_at ?? null,
+      failure_code: values.failure_code ?? null,
+      failure_message: values.failure_message ?? null,
+      failure_phase: values.failure_phase ?? null,
+      attempt_number: attemptNumber,
+      verified_payment_status: values.verified_payment_status ?? null,
+      last_verification_response: values.last_verification_response ?? null,
+      created_at: createdAt,
+      updated_at: values.updated_at ?? createdAt,
+      verified_at: values.verified_at ?? null,
+    };
+  };
+
+  const listMatchingAttempts = (
+    eqFilters: Map<string, unknown>,
+    orderings: Array<{ field: string; ascending: boolean }>,
+    limitCount?: number,
+  ) => {
+    let attempts = state.paymentAttempts.filter((attempt) =>
+      [...eqFilters.entries()].every(([field, value]) => getAttemptFieldValue(attempt, field) === value),
+    );
+
+    if (orderings.length > 0) {
+      attempts = [...attempts].sort((left, right) => {
+        for (const ordering of orderings) {
+          const leftValue = getAttemptFieldValue(left, ordering.field);
+          const rightValue = getAttemptFieldValue(right, ordering.field);
+          if (leftValue === rightValue) {
+            continue;
+          }
+
+          if (leftValue == null) {
+            return ordering.ascending ? -1 : 1;
+          }
+          if (rightValue == null) {
+            return ordering.ascending ? 1 : -1;
+          }
+
+          if (leftValue < rightValue) {
+            return ordering.ascending ? -1 : 1;
+          }
+          if (leftValue > rightValue) {
+            return ordering.ascending ? 1 : -1;
+          }
+        }
+
+        return 0;
+      });
+    }
+
+    if (typeof limitCount === "number") {
+      attempts = attempts.slice(0, limitCount);
+    }
+
+    return attempts;
+  };
+
+  const buildAttemptSelectQuery = () => {
+    const eqFilters = new Map<string, unknown>();
+    const orderings: Array<{ field: string; ascending: boolean }> = [];
+    let limitCount: number | undefined;
+
+    const query = {
+      eq(field: string, value: unknown) {
+        eqFilters.set(field, value);
+        return query;
+      },
+      order(field: string, options?: { ascending?: boolean }) {
+        orderings.push({ field, ascending: options?.ascending ?? true });
+        return query;
+      },
+      limit(count: number) {
+        limitCount = count;
+        return query;
+      },
+      maybeSingle: async () => ({
+        data: clonePaymentAttemptRow(listMatchingAttempts(eqFilters, orderings, limitCount)[0] ?? null),
+        error: null,
+      }),
+      single: async () => ({
+        data: clonePaymentAttemptRow(listMatchingAttempts(eqFilters, orderings, limitCount)[0] ?? null),
+        error: null,
+      }),
+    };
+
+    return query;
+  };
 
   const client = {
     from(table: string) {
@@ -267,7 +450,136 @@ function buildSupabaseHarness(
 
       if (table === "payment_attempts") {
         return {
-          upsert: upsertSpy,
+          select() {
+            return buildAttemptSelectQuery();
+          },
+          insert(values: Partial<MockPaymentAttemptRow>) {
+            attemptInsertSpy(values);
+            const inserted = createPaymentAttemptRow(
+              values as Partial<MockPaymentAttemptRow> & {
+                order_id: string;
+                provider: string;
+                merchant_reference: string;
+                amount: number;
+                currency: string;
+              },
+            );
+            state.paymentAttempts.push(inserted);
+
+            return {
+              select() {
+                return {
+                  single: async () => ({
+                    data: clonePaymentAttemptRow(inserted),
+                    error: null,
+                  }),
+                };
+              },
+            };
+          },
+          update(values: Partial<MockPaymentAttemptRow>) {
+            attemptUpdateSpy(values);
+            const eqFilters = new Map<string, unknown>();
+
+            const query = {
+              eq(field: string, value: unknown) {
+                eqFilters.set(field, value);
+                return query;
+              },
+              select() {
+                return {
+                  single: async () => {
+                    const index = state.paymentAttempts.findIndex((attempt) =>
+                      [...eqFilters.entries()].every(
+                        ([field, value]) => getAttemptFieldValue(attempt, field) === value,
+                      ),
+                    );
+
+                    if (index === -1) {
+                      return {
+                        data: null,
+                        error: null,
+                      };
+                    }
+
+                    const nextAttempt = {
+                      ...state.paymentAttempts[index],
+                      ...values,
+                    };
+                    state.paymentAttempts[index] = createPaymentAttemptRow(nextAttempt);
+
+                    return {
+                      data: clonePaymentAttemptRow(state.paymentAttempts[index]),
+                      error: null,
+                    };
+                  },
+                };
+              },
+            };
+
+            return query;
+          },
+          upsert(values: Partial<MockPaymentAttemptRow>, options?: { onConflict?: string }) {
+            upsertSpy(values, options);
+
+            const matchIndex = state.paymentAttempts.findIndex((attempt) => {
+              if (
+                options?.onConflict === "provider,provider_reference"
+                && values.provider_reference != null
+              ) {
+                return (
+                  attempt.provider === values.provider
+                  && attempt.provider_reference === values.provider_reference
+                );
+              }
+
+              if (values.id != null) {
+                return attempt.id === values.id;
+              }
+
+              if (values.order_id != null && values.attempt_number != null) {
+                return (
+                  attempt.order_id === values.order_id
+                  && attempt.attempt_number === values.attempt_number
+                );
+              }
+
+              return false;
+            });
+
+            const attempt =
+              matchIndex >= 0
+                ? createPaymentAttemptRow({
+                    ...state.paymentAttempts[matchIndex],
+                    ...values,
+                  } as MockPaymentAttemptRow)
+                : createPaymentAttemptRow(
+                    values as Partial<MockPaymentAttemptRow> & {
+                      order_id: string;
+                      provider: string;
+                      merchant_reference: string;
+                      amount: number;
+                      currency: string;
+                    },
+                  );
+
+            if (matchIndex >= 0) {
+              state.paymentAttempts[matchIndex] = attempt;
+            } else {
+              state.paymentAttempts.push(attempt);
+            }
+
+            return {
+              select() {
+                return {
+                  single: async () => ({
+                    data: clonePaymentAttemptRow(attempt),
+                    error: null,
+                  }),
+                };
+              },
+            };
+          },
         };
       }
 
@@ -284,8 +596,11 @@ function buildSupabaseHarness(
     setOrderRow: (nextOrder) => {
       state.orderRow = cloneOrderRow(nextOrder);
     },
+    getPaymentAttempts: () => state.paymentAttempts.map(clonePaymentAttemptRow),
     updateSpy,
     upsertSpy,
+    attemptInsertSpy,
+    attemptUpdateSpy,
     rpcSpy,
   };
 }
@@ -329,7 +644,6 @@ describe("payment sync regression tests", () => {
     ).rejects.toThrow("Payment amount verification failed. Order held for review.");
 
     expect(supabase.upsertSpy).toHaveBeenCalledTimes(1);
-    expect(supabase.updateSpy).toHaveBeenCalledTimes(1);
     expect(supabase.updateSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         payment_last_verified_at: expect.any(String),

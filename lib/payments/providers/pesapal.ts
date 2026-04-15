@@ -64,9 +64,9 @@ export type PesapalSubmitOrderInput = {
 };
 
 export type PesapalSubmitOrderResponse = {
-  order_tracking_id: string;
+  order_tracking_id?: string;
   merchant_reference?: string;
-  redirect_url: string;
+  redirect_url?: string;
   error?: {
     code?: string;
     message?: string;
@@ -161,6 +161,11 @@ export function isPesapalInitiationRejectedError(
 
 function isProductionRuntime() {
   return process.env.NODE_ENV === "production";
+}
+
+function shouldForcePesapalInitiationRejection() {
+  const normalized = process.env.PESAPAL_FORCE_INIT_REJECTION?.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
 }
 
 function getBaseUrl() {
@@ -571,7 +576,6 @@ export async function submitPesapalOrderRequest(
 ): Promise<PesapalSubmitOrderResponse> {
   const normalizedInput = validatePesapalSubmitInput(input);
   logPesapalEnvironmentWarning(input.requestOrigin);
-  const notificationId = await ensurePesapalIpnId(input.requestOrigin);
   const { firstName, lastName } = splitCustomerName(input.customerName);
   const callbackUrl = getCallbackUrl(
     normalizedInput.orderId,
@@ -583,6 +587,40 @@ export async function submitPesapalOrderRequest(
     input.orderAccessLinkToken,
     input.requestOrigin,
   );
+
+  if (shouldForcePesapalInitiationRejection()) {
+    const forcedResponse: PesapalSubmitOrderResponse = {
+      merchant_reference: normalizedInput.orderId,
+      status: "REJECTED",
+      message: "Forced preview rejection for explicit initiation-rejection testing.",
+      error: {
+        code: "forced_preview_rejection",
+        message: "Forced preview rejection for explicit initiation-rejection testing.",
+        type: "preview_test_toggle",
+      },
+    };
+
+    console.warn("pesapal_submit_order_forced_rejection", {
+      orderId: normalizedInput.orderId,
+      callbackUrl,
+      cancellationUrl,
+      message: forcedResponse.message,
+    });
+
+    throw new PesapalInitiationRejectedError({
+      code: forcedResponse.error?.code ?? null,
+      providerStatus: forcedResponse.status ?? null,
+      providerMessage:
+        forcedResponse.error?.message
+        ?? forcedResponse.message
+        ?? "Forced preview rejection for explicit initiation-rejection testing.",
+      providerReference: null,
+      redirectUrl: null,
+      rawResponse: forcedResponse,
+    });
+  }
+
+  const notificationId = await ensurePesapalIpnId(input.requestOrigin);
 
   const payload = {
     id: normalizedInput.orderId,
@@ -741,11 +779,16 @@ export function createPesapalGateway(): PaymentGateway {
         email: input.email,
         requestOrigin: input.requestOrigin,
       });
+      const providerReference = response.order_tracking_id;
+
+      if (!providerReference) {
+        throw new Error("Pesapal order request did not return a tracking reference.");
+      }
 
       return {
         provider,
-        providerReference: response.order_tracking_id,
-        redirectUrl: response.redirect_url,
+        providerReference,
+        redirectUrl: response.redirect_url ?? null,
         paymentStatus: "pending",
         rawResponse: response,
       };

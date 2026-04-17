@@ -2,7 +2,12 @@ import Image from "next/image";
 import type { ComponentProps, ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
-type StorefrontProductImageVariant = "card" | "category" | "detail" | "thumb";
+type StorefrontProductImageVariant = "thumbnail" | "card" | "detail" | "hero";
+
+type StorefrontProductImageOverridePolicy = {
+  sizes?: string;
+  quality?: 65 | 70 | 75;
+};
 
 type StorefrontProductImageProps = {
   src?: string | null;
@@ -11,10 +16,9 @@ type StorefrontProductImageProps = {
   className?: string;
   imageClassName?: string;
   fallback?: ReactNode;
-  sizes?: string;
-  quality?: number;
   priority?: boolean;
   onError?: ComponentProps<typeof Image>["onError"];
+  overridePolicy?: StorefrontProductImageOverridePolicy;
 };
 
 const variantConfig: Record<
@@ -27,20 +31,21 @@ const variantConfig: Record<
     quality: number;
   }
 > = {
+  thumbnail: {
+    containerClassName: "relative h-full w-full overflow-hidden rounded-xl bg-surface-alt",
+    imageClassName: "object-cover",
+    fallbackClassName:
+      "flex h-full items-center justify-center px-2 text-center text-xs text-muted-foreground",
+    sizes: "80px",
+    quality: 65,
+  },
   card: {
     containerClassName: "relative h-52 w-full overflow-hidden bg-surface-alt",
     imageClassName: "object-cover",
     fallbackClassName:
       "flex h-full items-center justify-center text-sm text-muted-foreground",
-    sizes: "(max-width: 767px) 100vw, (max-width: 1279px) 50vw, 384px",
-    quality: 70,
-  },
-  category: {
-    containerClassName: "relative h-56 w-full overflow-hidden bg-surface-alt",
-    imageClassName: "object-cover",
-    fallbackClassName:
-      "flex h-full items-center justify-center text-sm text-muted-foreground",
-    sizes: "(max-width: 767px) 100vw, (max-width: 1279px) 50vw, 288px",
+    sizes:
+      "(max-width: 767px) calc(100vw - 2rem), (max-width: 1279px) calc((100vw - 3.5rem) / 2), 320px",
     quality: 70,
   },
   detail: {
@@ -49,16 +54,16 @@ const variantConfig: Record<
     imageClassName: "object-cover",
     fallbackClassName:
       "flex h-full items-center justify-center text-sm text-muted-foreground",
-    sizes: "(max-width: 1023px) 100vw, 560px",
+    sizes: "(max-width: 1023px) calc(100vw - 2rem), 560px",
     quality: 75,
   },
-  thumb: {
-    containerClassName: "relative h-full w-full overflow-hidden rounded-xl bg-surface-alt",
+  hero: {
+    containerClassName: "relative h-full w-full overflow-hidden bg-surface-alt",
     imageClassName: "object-cover",
     fallbackClassName:
-      "flex h-full items-center justify-center px-2 text-center text-xs text-muted-foreground",
-    sizes: "80px",
-    quality: 65,
+      "flex h-full items-center justify-center text-sm text-muted-foreground",
+    sizes: "100vw",
+    quality: 75,
   },
 };
 
@@ -69,10 +74,9 @@ export function StorefrontProductImage({
   className,
   imageClassName,
   fallback,
-  sizes,
-  quality,
   priority = false,
   onError,
+  overridePolicy,
 }: StorefrontProductImageProps) {
   const config = variantConfig[variant];
   const normalizedSrc = src?.trim();
@@ -85,8 +89,8 @@ export function StorefrontProductImage({
           alt={alt}
           fill
           priority={priority}
-          sizes={sizes ?? config.sizes}
-          quality={quality ?? config.quality}
+          sizes={overridePolicy?.sizes ?? config.sizes}
+          quality={overridePolicy?.quality ?? config.quality}
           className={cn(config.imageClassName, imageClassName)}
           onError={onError}
         />

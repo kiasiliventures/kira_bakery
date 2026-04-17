@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
-import Image from "next/image";
 import Link from "next/link";
 import { CategoryTile } from "@/components/category-tile";
+import { StorefrontProductImage } from "@/components/storefront-product-image";
 import { getCachedCategoryImages } from "@/lib/catalog/products";
 import { getAbsoluteUrl } from "@/lib/site";
 import { sortProductCategories } from "@/types/product";
@@ -41,13 +41,13 @@ export default async function HomePage() {
         dangerouslySetInnerHTML={{ __html: JSON.stringify(localBusinessJsonLd) }}
       />
       <section className="relative left-1/2 right-1/2 -mx-[50vw] min-h-[560px] w-screen overflow-hidden">
-        <Image
+        <StorefrontProductImage
           src="/images/hero_image_3.jpg"
           alt="Premium bakery bread and pastry display"
-          fill
+          variant="hero"
           priority
-          className="object-cover"
-          sizes="100vw"
+          className="absolute inset-0"
+          imageClassName="object-cover"
         />
         <div className="absolute inset-0 bg-black/40" />
         <div className="relative z-10 mx-auto grid min-h-[560px] w-full max-w-6xl items-center gap-8 px-4 lg:grid-cols-[1.1fr_1fr]">

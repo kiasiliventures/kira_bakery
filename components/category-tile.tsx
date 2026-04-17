@@ -30,7 +30,8 @@ export function CategoryTile({ name, images = [], href }: CategoryTileProps) {
         <StorefrontProductImage
           src={image}
           alt={name}
-          variant="category"
+          variant="card"
+          className="h-56"
           imageClassName="transition-transform duration-300 group-hover:scale-105"
           onError={handleImageError}
           fallback={

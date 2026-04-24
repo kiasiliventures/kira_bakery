@@ -28,6 +28,13 @@ function payloadTooLarge() {
   );
 }
 
+function lengthRequired() {
+  return NextResponse.json(
+    { message: "Upload size could not be verified. Please try again." },
+    { status: 411 },
+  );
+}
+
 async function deleteUploadedReferenceImage(referenceImage: CakeReferenceImage) {
   const supabase = getSupabaseServerClient();
   const removeResult = await supabase.storage
@@ -86,9 +93,17 @@ export async function POST(request: Request) {
     }
 
     const contentLengthHeader = request.headers.get("Content-Length");
-    if (contentLengthHeader) {
+    if (!contentLengthHeader) {
+      if (process.env.NODE_ENV === "production") {
+        return lengthRequired();
+      }
+    } else {
       const contentLength = Number.parseInt(contentLengthHeader, 10);
-      if (Number.isFinite(contentLength) && contentLength > MAX_CAKE_CUSTOM_REQUEST_BODY_BYTES) {
+      if (!Number.isFinite(contentLength) || contentLength < 0) {
+        return lengthRequired();
+      }
+
+      if (contentLength > MAX_CAKE_CUSTOM_REQUEST_BODY_BYTES) {
         return payloadTooLarge();
       }
     }

@@ -42,6 +42,18 @@ type DeliveryPricingBracketRow = {
   sort_order: number;
 };
 
+type CacheEntry<T> = {
+  expiresAt: number;
+  value: T;
+};
+
+type DeliveryQuoteSource = Omit<DeliveryQuote, "quoteToken">;
+
+const DELIVERY_AUTOCOMPLETE_CACHE_TTL_MS = 60_000;
+const DELIVERY_QUOTE_CACHE_TTL_MS = 2 * 60_000;
+const deliveryAutocompleteCache = new Map<string, CacheEntry<DeliveryAutocompleteSuggestion[]>>();
+const deliveryQuoteCache = new Map<string, CacheEntry<DeliveryQuoteSource>>();
+
 function toNumber(value: NumericValue, fieldName: string) {
   const numericValue = typeof value === "string" ? Number(value) : value;
   if (typeof numericValue !== "number" || Number.isNaN(numericValue)) {
@@ -181,17 +193,84 @@ function findMatchingBracket(
   );
 }
 
+function getCachedValue<T>(cache: Map<string, CacheEntry<T>>, key: string) {
+  const cached = cache.get(key);
+  if (!cached) {
+    return null;
+  }
+
+  if (cached.expiresAt <= Date.now()) {
+    cache.delete(key);
+    return null;
+  }
+
+  return cached.value;
+}
+
+function setCachedValue<T>(
+  cache: Map<string, CacheEntry<T>>,
+  key: string,
+  value: T,
+  ttlMs: number,
+) {
+  cache.set(key, {
+    expiresAt: Date.now() + ttlMs,
+    value,
+  });
+}
+
+function normalizeAutocompleteCacheKey(input: string, options?: { limit?: number }) {
+  return [
+    input.trim().toLocaleLowerCase("en-US").replace(/\s+/g, " "),
+    Math.max(1, Math.min(10, Math.trunc(options?.limit ?? 5))),
+  ].join(":");
+}
+
+function buildQuoteCacheKey(input: DeliveryLocationInput, pricingConfig: DeliveryPricingConfig) {
+  return [
+    pricingConfig.id,
+    pricingConfig.storeLocation.id,
+    input.placeId.trim(),
+  ].join(":");
+}
+
+function withFreshQuoteToken(quote: DeliveryQuoteSource): DeliveryQuote {
+  return {
+    ...quote,
+    quoteToken: createDeliveryQuoteToken(quote),
+  };
+}
+
 export async function autocompleteDeliveryPlaces(
   input: string,
   options?: { sessionToken?: string; limit?: number },
 ): Promise<DeliveryAutocompleteSuggestion[]> {
+  const cacheKey = normalizeAutocompleteCacheKey(input, options);
+  const cached = getCachedValue(deliveryAutocompleteCache, cacheKey);
+  if (cached) {
+    return cached;
+  }
+
   const provider = getGoogleMapsDeliveryProvider();
-  return provider.autocompletePlaces(input, options);
+  const suggestions = await provider.autocompletePlaces(input, options);
+  setCachedValue(
+    deliveryAutocompleteCache,
+    cacheKey,
+    suggestions,
+    DELIVERY_AUTOCOMPLETE_CACHE_TTL_MS,
+  );
+  return suggestions;
 }
 
 export async function quoteDelivery(input: DeliveryLocationInput): Promise<DeliveryQuote> {
   const provider = getGoogleMapsDeliveryProvider();
   const pricingConfig = await getCachedActiveDeliveryPricingConfig();
+  const cacheKey = buildQuoteCacheKey(input, pricingConfig);
+  const cached = getCachedValue(deliveryQuoteCache, cacheKey);
+  if (cached) {
+    return withFreshQuoteToken(cached);
+  }
+
   const destination = await provider.resolvePlace(input);
   const routeDistanceKm = await provider.computeRouteDistanceKm(
     {
@@ -235,8 +314,6 @@ export async function quoteDelivery(input: DeliveryLocationInput): Promise<Deliv
     destination,
   };
 
-  return {
-    ...quote,
-    quoteToken: createDeliveryQuoteToken(quote),
-  };
+  setCachedValue(deliveryQuoteCache, cacheKey, quote, DELIVERY_QUOTE_CACHE_TTL_MS);
+  return withFreshQuoteToken(quote);
 }

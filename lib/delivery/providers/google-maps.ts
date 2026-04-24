@@ -64,7 +64,7 @@ function getGoogleMapsLanguageCode() {
 }
 
 function getGoogleMapsTimeoutMs() {
-  return Number(process.env.GOOGLE_MAPS_TIMEOUT_MS ?? 10_000);
+  return Number(process.env.GOOGLE_MAPS_TIMEOUT_MS ?? 5_000);
 }
 
 function mergeSignals(...signals: Array<AbortSignal | null | undefined>) {

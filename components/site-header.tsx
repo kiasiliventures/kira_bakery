@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { ChevronDown, X } from "lucide-react";
+import { Menu, X } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import {
   AccountMenu,
@@ -106,11 +106,11 @@ export function SiteHeader() {
             </div>
             <span
               className={cn(
-                "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-surface text-muted transition-transform duration-200",
-                isMobileMenuOpen && "rotate-180 text-accent",
+                "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-surface text-muted transition-colors duration-200",
+                isMobileMenuOpen && "text-accent",
               )}
             >
-              <ChevronDown className="h-4 w-4" aria-hidden />
+              <Menu className="h-4 w-4" aria-hidden />
             </span>
           </button>
           <Link

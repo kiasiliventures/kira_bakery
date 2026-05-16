@@ -78,11 +78,6 @@ export const metadata: Metadata = {
     title: "KiRA Bakery",
     statusBarStyle: "default",
   },
-  icons: {
-    shortcut: "/icon.png",
-    apple: "/icon.png",
-    icon: "/icon.png",
-  },
 };
 
 export const viewport: Viewport = {
